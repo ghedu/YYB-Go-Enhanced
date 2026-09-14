@@ -49,6 +49,7 @@ jobs:
         env:
           INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
           INPUT_PUSH_LATEST: ${{ inputs.push_latest }}
+          DH_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           set -Eeuo pipefail
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
@@ -78,6 +79,10 @@ jobs:
             echo "image=$image"
             echo "tags<<EOF"
             printf '%s\n' "${tags[@]}" | awk '!seen[$0]++'
+            if [[ -n "$DH_USERNAME" ]]; then
+              dh_image="docker.io/${DH_USERNAME,,}/yyb-go-enhanced"
+              printf '%s\n' "${tags[@]}" | awk -v img="$image" -v dh="$dh_image" '!seen[$0]++ { sub(img, dh); print }' | awk '!seen[$0]++'
+            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -111,6 +116,24 @@ jobs:
           set -Eeuo pipefail
           for attempt in 1 2 3; do
             if printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin; then
+              exit 0
+            fi
+            [[ "$attempt" == 3 ]] && exit 1
+            sleep $((attempt * 10))
+          done
+
+      - name: Log in to Docker Hub
+        env:
+          DH_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          if [[ -z "$DH_USERNAME" ]]; then
+            echo "DOCKERHUB_USERNAME not set, skip Docker Hub login"
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            if printf '%s' "$DH_TOKEN" | docker login docker.io -u "$DH_USERNAME" --password-stdin; then
               exit 0
             fi
             [[ "$attempt" == 3 ]] && exit 1
