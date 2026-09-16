@@ -1,5 +1,12 @@
 # 青龙修复脚本
 
+## code-collection-share YYB 适配合集
+
+`scripts/code-collection-share/` 收录 136 个经过 YYB 多账号适配的 Python 脚本。
+已完成文件哈希、AST 结构和名称归一化去重，并覆盖普通取码、动态 AppID、手机号
+授权 code/加密包等调用形式。青龙不再直接订阅原仓库，防止更新覆盖适配层；配置、
+限制和任务路径见 [目录说明](code-collection-share/README.md)。
+
 ## YYB 账号公共状态缓存
 
 `yyb_account_guard.py`（Python）和 `yyb-account-guard.js`（Node）提供共享的
@@ -35,6 +42,14 @@
 - `TCLXLC.js`：移除登录流程中对未定义 `parsedServer` 变量的引用。
 
 ## YYB 活动脚本
+
+- `asdcb_auto_sign.py`：阿水大杯茶 YYB 版每日签到。每周二先按活动本期券模板 ID 查询个人券包，准确区分未使用/已使用/已过期；未领券时按小程序源码生成 `MD5` 签名和 AES-CBC/PKCS7 `data`。微信的 `getLatestUserKey` 属于小程序运行时本地能力，当前 YYB iLink 转发若返回 `invalid api_name (-12003)`，脚本会明确显示“未提交”，不会将顶层 `success` 或静态 `receiveStatus` 误报为领取结果。可用真实动态参数通过 `ASDCB_MEMBER_CLAIM_PAYLOAD` 覆盖。7.9 折券兑换通过 `ASDCB_ENABLE_79_COUPON=1` 显式开启，默认关闭。`--dry-run` 会在券包核验后直接跳过签到、领券和兑换，并在启动行明确标记查询模式。
+
+  ```bash
+  python3 asdcb_auto_sign.py --dry-run
+  # 青龙环境变量：ASDCB_ENABLE_79_COUPON=1
+  # 可选：ASDCB_MEMBER_CLAIM_PAYLOAD={"activityId":"...","timestamp":"...","signature":"...","data":"..."}
+  ```
 
 - `mlgogo_sign.py`：马历小程序积分商城每日签到。使用 `wx86d2d7c2d832b4ce`
   动态获取 code，按小程序内置 RSA 签名生成每次请求的 `_s`，支持多账号、签到

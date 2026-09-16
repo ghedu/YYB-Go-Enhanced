@@ -2,6 +2,19 @@
 
 本项目按实际提交时间记录主要功能变化，便于部署后确认版本内容。
 
+## 2026-09-15
+
+- 修正 GitHub Actions 构建触发范围：脚本、README 和普通文档更新不再触发 Docker 镜像或 Magisk 构建；服务端、运行资源、打包文件和对应 workflow 仍会自动验证并构建。
+- 为同一 YYB 账号增加 `wx.login` 取码互斥，不同账号保持并发；避免多个青龙任务同时取码时发生账号级会话/一次性 code 竞态，并补充并发回归测试。
+- 整理 `L0NE-6/code-collection-share` 的 136 个 Python 脚本到 `scripts/code-collection-share/`：完成文件哈希、AST 和名称归一化去重，保留 136 个互不重复脚本。
+- 统一适配 `YYB_SERVER` 多账号和 `/wxapp/getCode`，支持动态 AppID、`YYB_API_KEY` 协议鉴权以及 `/wxapp/getPhoneNumber` 手机号授权；保留未配置 YYB 时的旧服务兼容入口。
+- 明确微信资料能力边界：不使用普通账号资料伪造 `encryptedData`、`iv` 或 `signature`；青龙任务脱离原仓库订阅，后续由本仓库审核发布。
+- 修正阿水脚本查询模式：启动日志明确标记 `--dry-run`，个人券包核验后不再继续请求动态密钥或尝试领券；同步当前小程序版本请求头和 `qm-trace-store-id`。
+- 新增 `scripts/asdcb_auto_sign.py` 的阿水大杯茶周二会员日处理：自动读取活动配置，并通过个人券包核对本期券的真实领取状态。
+- 新增 7.9 折券积分兑换链：开关 `ASDCB_ENABLE_79_COUPON` 默认关闭，开启后仅周二执行，兑换前校验商品价格、库存、活动状态、积分和每日限购，创建订单后通过 `payment-info` 确认兑换完成。
+- 根据阿水小程序解包还原会员日领取算法：`signature` 使用活动 ID 反转值作为 key 的排序 MD5，`openid` 使用 Qmai openid 的 MD5，`data` 使用 `getLatestUserKey` 返回的 `encryptKey/iv` 做 AES-CBC/PKCS7 后 Base64 编码。旧 token 缓存自动补齐 `openid/userId`。
+- 修正会员日诊断：静态配置字段 `receiveStatus` 不再误写成个人领取状态；领取前按本期券模板 ID 查询未使用/已使用/已过期券。YYB 协议层返回 `invalid api_name (-12003)` 时直接说明本地 `getLatestUserKey` 未实现，不再把顶层 `success` 当成失败原因，也不会误报已领取或已提交。
+
 ## 2026-09-12
 
 - 跟进 Issue #43：修复未匹配接口路径被登录页遮蔽的问题，统一返回 JSON 404；未登录访问账号管理 API 返回 JSON 401，管理页面继续要求登录。补充异机青龙取码配置、反代排查说明和开启认证后的本机/异机路由回归测试。

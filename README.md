@@ -26,6 +26,7 @@
 - 账号运行管理：每个微信账号独立创建、启停和运行青龙脚本，并查看日志
 - 运行日志使用独立抽屉连续刷新，保持阅读位置；支持超过 2 MB 的青龙日志索引响应
 - 账号独立推送：支持 Server酱、PushPlus 和企业微信机器人，密钥只保存在青龙环境变量
+- 提供 `scripts/code-collection-share/` 的 136 个 YYB 多账号适配脚本；已去重并脱离上游自动订阅，避免更新覆盖兼容修复
 
 授权短链接的历史 URL 使用 `YYB_ACCOUNT_LINK_KEY` 做 AES-GCM 加密保存。生产环境请设置随机长字符串并在升级时保持不变；不设置时会由管理员初始化配置派生兼容密钥。
 
@@ -114,7 +115,11 @@ Android ARM64 设备可从 [Releases](https://github.com/525815266/YYB-Go-Enhanc
 - **失败恢复**：代码拉取、QEMU 初始化、Buildx 启动、GHCR 登录及镜像构建推送均最多重试 3 次；镜像标签由工作流直接生成，不依赖需要在 Set up job 下载的第三方 Action。
 - **发布校验**：Docker 构建会先执行 `go test ./...`，测试失败时不会生成或推送镜像。
 
-Magisk 模块使用独立的 `Build Magisk Module` Workflow：主分支每次提交都会编译并校验 ARM64 安装包；推送 `magisk-v0.1.5` 这类标签时，会自动创建对应 Release 并上传 ZIP。也可在 Actions 页面手动填写版本并选择是否发布 Release。Docker 与 Magisk 为两条独立任务，一方失败不会阻塞另一方。
+Magisk 模块使用独立的 `Build Magisk Module` Workflow：服务端、运行前端资源或 Magisk 打包文件变更时会编译并校验 ARM64 安装包；推送 `magisk-v0.1.5` 这类标签时，会自动创建对应 Release 并上传 ZIP。也可在 Actions 页面手动填写版本并选择是否发布 Release。Docker 与 Magisk 为两条独立任务，一方失败不会阻塞另一方。
+
+Docker 镜像只在服务端代码、运行资源、Go 依赖、Docker 构建文件或对应 workflow 变更时构建；`scripts/**`、README 和普通文档更新不会再触发镜像更新提示。Magisk 只在服务端代码、运行前端资源、打包文件、Go 依赖或对应 workflow 变更时构建。这样脚本发布不会伪装成 Docker/Magisk 版本更新，但核心服务提交仍会自动验证和构建。
+
+同一 YYB 账号的 `wx.login` 取码请求会按账号串行化，避免两个青龙任务同时刷新/消费同一账号的短期 code；不同账号仍可并发执行。`wx.login` code 本身仍是一次性短期凭据，不能在脚本之间复用。
 
 ## 本机微信快速授权（实验性）
 
