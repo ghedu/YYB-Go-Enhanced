@@ -66,7 +66,7 @@
     <section class="platform-stage">
       <header class="platform-topbar">
         <div style="display:flex;align-items:center;gap:12px;min-width:0"><button class="platform-menu" id="platformMenu" type="button" aria-label="打开导航">☰</button><div class="platform-page-context"><div class="platform-breadcrumb">YYB Go / ${current[1]}</div><div class="platform-page-title">${current[0]}</div></div></div>
-        <div class="platform-user"><div class="platform-user-copy"><strong id="platformUserName">正在读取</strong><span id="platformUserRole">当前用户</span></div><span class="platform-avatar" id="platformAvatar">Y</span></div>
+        <div class="platform-user"><a class="platform-build" id="platformBuild" href="https://github.com/525815266/YYB-Go-Enhanced/releases" target="_blank" rel="noreferrer" title="正在读取版本信息"><span>当前版本</span><strong>读取中</strong></a><div class="platform-user-copy"><strong id="platformUserName">正在读取</strong><span id="platformUserRole">当前用户</span></div><span class="platform-avatar" id="platformAvatar">Y</span></div>
       </header>
       <div class="platform-main"></div>
     </section>`;
@@ -79,6 +79,23 @@
   document.getElementById("platformOverlay").onclick = closeNav;
   shell.querySelectorAll(".platform-nav a").forEach(link => link.addEventListener("click", closeNav));
   document.getElementById("platformLogout").onclick = async () => { await fetch("/logout", { method: "POST" }); location.href = "/login"; };
+
+  fetch("/api/version").then(async response => {
+    const body = await response.json();
+    if (!response.ok || body.code !== 0) throw new Error(body.msg || "读取版本失败");
+    const info = body.data || {};
+    const version = info.version || "dev";
+    const build = document.getElementById("platformBuild");
+    build.querySelector("strong").textContent = `v${version}`;
+    build.querySelector("span").textContent = "当前版本";
+    build.href = info.update_url || build.href;
+    build.title = `当前版本 v${version}`;
+  }).catch(() => {
+    const build = document.getElementById("platformBuild");
+    build.querySelector("strong").textContent = "未知";
+    build.querySelector("span").textContent = "当前版本";
+    build.title = "无法读取版本信息";
+  });
 
   fetch("/api/auth/me").then(async response => {
     if (response.status === 401) {

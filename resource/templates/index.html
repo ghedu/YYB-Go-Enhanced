@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>工作台 - YYB Go</title>
-  <link rel="stylesheet" href="/static/css/platform.css?v=20260824-push1">
+  <link rel="stylesheet" href="/static/css/platform.css?v=20260921-ui">
   <style>
     :root {
       color-scheme: light;
@@ -353,6 +353,9 @@
     }
 
     .account-card {
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
       width: 100%;
       min-width: 0;
       min-height: 148px;
@@ -366,7 +369,112 @@
       grid-template-columns: 36px minmax(0, 1fr);
       gap: 9px;
       align-items: start;
-      transition: background 160ms ease, border-color 160ms ease;
+      transition: background 180ms cubic-bezier(0.25, 1, 0.5, 1), border-color 180ms cubic-bezier(0.25, 1, 0.5, 1), box-shadow 180ms cubic-bezier(0.25, 1, 0.5, 1);
+    }
+
+    .account-card.alive {
+      border-color: oklch(0.84 0.055 145);
+      background: oklch(0.985 0.008 145);
+    }
+
+    .account-card.alive .account-status {
+      color: oklch(0.43 0.12 145);
+      font-weight: 680;
+    }
+
+    .account-card.warning {
+      border-color: oklch(0.84 0.07 82);
+      background: oklch(0.985 0.014 82);
+    }
+
+    .account-card.warning .account-status {
+      color: oklch(0.47 0.11 72);
+      font-weight: 680;
+    }
+
+    .account-card.expired {
+      border-color: oklch(0.78 0.025 20);
+      background: oklch(0.94 0.008 20);
+      box-shadow: inset 0 0 0 1px oklch(0.74 0.03 20 / 0.22);
+    }
+
+    .account-card.expired .avatar,
+    .account-card.expired .account-main {
+      opacity: 0.58;
+      filter: grayscale(0.88) saturate(0.35);
+      transition: opacity 420ms cubic-bezier(0.25, 1, 0.5, 1), filter 420ms cubic-bezier(0.25, 1, 0.5, 1);
+    }
+
+    .account-card.expired .account-status {
+      color: oklch(0.42 0.12 24);
+      font-weight: 760;
+    }
+
+    .account-card.expired::after {
+      content: attr(data-state-label);
+      position: absolute;
+      right: 14px;
+      top: 55px;
+      z-index: 2;
+      padding: 4px 10px 3px;
+      border: 3px double oklch(0.49 0.19 24 / 0.72);
+      border-radius: 4px;
+      color: oklch(0.45 0.2 24 / 0.76);
+      background: oklch(0.97 0.02 24 / 0.48);
+      box-shadow: 0 0 0 1px oklch(0.99 0 0 / 0.5), 0 2px 8px oklch(0.35 0.12 24 / 0.12);
+      font-size: 17px;
+      font-weight: 900;
+      letter-spacing: 0.16em;
+      line-height: 1.1;
+      text-indent: 0.16em;
+      transform: rotate(-13deg);
+      pointer-events: none;
+    }
+
+    .account-card.expired.expired-alert {
+      animation: expired-neon-alert 2.35s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .account-card.expired.expired-alert::after {
+      animation: expired-stamp-in 720ms cubic-bezier(0.16, 1, 0.3, 1) 260ms both;
+    }
+
+    .account-card.expired.expired-alert .avatar,
+    .account-card.expired.expired-alert .account-main {
+      animation: expired-content-dim 2.35s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    @keyframes expired-neon-alert {
+      0%, 22% {
+        border-color: oklch(0.61 0.24 24);
+        background: oklch(0.965 0.04 24);
+        box-shadow: 0 0 0 2px oklch(0.68 0.25 24 / 0.34), 0 0 22px oklch(0.61 0.25 24 / 0.56), inset 0 0 18px oklch(0.65 0.19 24 / 0.12);
+      }
+      38% {
+        border-color: oklch(0.78 0.08 24);
+        box-shadow: 0 0 0 1px oklch(0.68 0.21 24 / 0.18), 0 0 7px oklch(0.61 0.25 24 / 0.2);
+      }
+      52% {
+        border-color: oklch(0.62 0.21 24);
+        background: oklch(0.965 0.026 24);
+        box-shadow: 0 0 0 2px oklch(0.68 0.22 24 / 0.24), 0 0 15px oklch(0.61 0.23 24 / 0.34);
+      }
+      100% {
+        border-color: oklch(0.78 0.025 20);
+        background: oklch(0.94 0.008 20);
+        box-shadow: inset 0 0 0 1px oklch(0.74 0.03 20 / 0.22);
+      }
+    }
+
+    @keyframes expired-stamp-in {
+      0% { opacity: 0; transform: rotate(-13deg) scale(1.42); filter: blur(2px); }
+      54% { opacity: 0.96; transform: rotate(-13deg) scale(0.96); filter: blur(0); }
+      100% { opacity: 1; transform: rotate(-13deg) scale(1); filter: blur(0); }
+    }
+
+    @keyframes expired-content-dim {
+      0%, 32% { opacity: 0.92; filter: grayscale(0.15) saturate(0.9); }
+      100% { opacity: 0.58; filter: grayscale(0.88) saturate(0.35); }
     }
 
     .account-card:hover {
@@ -374,9 +482,20 @@
       border-color: oklch(0.78 0.035 190);
     }
 
+    .account-card.expired:hover {
+      background: oklch(0.955 0.01 20);
+      border-color: oklch(0.69 0.08 24);
+    }
+
     .account-card.selected {
       background: var(--accent-soft);
       border-color: var(--accent);
+    }
+
+    .account-card.expired.selected {
+      background: oklch(0.94 0.012 20);
+      border-color: oklch(0.58 0.15 24);
+      box-shadow: 0 0 0 2px oklch(0.68 0.16 24 / 0.2), inset 0 0 0 1px oklch(0.74 0.04 20 / 0.24);
     }
 
     .avatar {
@@ -701,6 +820,45 @@
     .link-dialog-existing-row .btn { padding:6px 8px; font-size:12px; }
     @media (max-width:520px) { .link-dialog-body { padding:18px; } .link-dialog-url { flex-direction:column; } .link-dialog-url .btn { width:100%; } .link-dialog-existing-row { align-items:flex-start; flex-direction:column; } }
 
+    /* A little elevation and motion makes the account queue feel interactive
+       without turning a dense operations screen into a marketing surface. */
+    .account-band,
+    .panel,
+    .summary,
+    .quick-actions {
+      box-shadow: 0 12px 30px oklch(0.18 0.025 252 / 0.07);
+    }
+
+    .account-strip {
+      padding: 16px;
+      gap: 12px;
+    }
+
+    .account-card {
+      min-height: 156px;
+      padding: 13px;
+      border-radius: 11px;
+      box-shadow: 0 5px 14px oklch(0.18 0.025 252 / 0.045);
+      transition: background 180ms cubic-bezier(0.25, 1, 0.5, 1), border-color 180ms cubic-bezier(0.25, 1, 0.5, 1), box-shadow 180ms cubic-bezier(0.25, 1, 0.5, 1), transform 180ms cubic-bezier(0.25, 1, 0.5, 1);
+    }
+
+    .account-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 22px oklch(0.18 0.025 252 / 0.1);
+    }
+
+    .account-card.selected {
+      box-shadow: 0 0 0 2px var(--accent), 0 10px 24px oklch(0.44 0.112 190 / 0.14);
+    }
+
+    .avatar {
+      box-shadow: 0 0 0 4px oklch(1 0 0 / 0.68);
+    }
+
+    .stat-chip {
+      box-shadow: 0 2px 8px oklch(0.18 0.025 252 / 0.04);
+    }
+
     @media (max-width: 1360px) {
       .overview,
       .work-grid {
@@ -762,6 +920,12 @@
         max-height: none;
         overflow: visible;
       }
+
+      .account-card.expired::after {
+        right: 18px;
+        top: 58px;
+        font-size: 16px;
+      }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -771,6 +935,21 @@
         scroll-behavior: auto !important;
         transition-duration: 1ms !important;
         animation-duration: 1ms !important;
+        animation-delay: 0ms !important;
+        animation-iteration-count: 1 !important;
+      }
+
+      .account-card.expired.expired-alert {
+        animation: none !important;
+      }
+
+      .account-card.expired.expired-alert::after {
+        animation: none !important;
+      }
+
+      .account-card.expired.expired-alert .avatar,
+      .account-card.expired.expired-alert .account-main {
+        animation: none !important;
       }
     }
   </style>
@@ -1035,9 +1214,10 @@
         { name: "appmsglike", label: "/wx/appmsglike 文章点赞", route: "/wx/appmsglike", requiresAppID: true, needsPayload: true },
         { name: "oauth", label: "/wx/oauth 公众号授权", route: "/wx/oauth", requiresAppID: true }
       ],
-	  proxyConfigs: new Map(),
+      proxyConfigs: new Map(),
       selectedOpenID: "",
-      lastResult: ""
+      lastResult: "",
+      expiredIntroPlayed: false
     };
 
     const $ = id => document.getElementById(id);
@@ -1054,6 +1234,47 @@
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+    }
+
+    async function copyText(value, fallbackInput = null) {
+      const text = String(value ?? "");
+      if (!text) throw new Error("empty text");
+      if (window.isSecureContext && navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch {
+          // Continue with the legacy browser fallback below.
+        }
+      }
+      let input = fallbackInput;
+      let temporary = false;
+      if (!input) {
+        input = document.createElement("textarea");
+        temporary = true;
+        input.setAttribute("readonly", "");
+        input.style.position = "fixed";
+        input.style.left = "-9999px";
+        input.style.top = "0";
+        input.style.opacity = "0";
+        input.value = text;
+        document.body.appendChild(input);
+      } else if ("value" in input) {
+        input.value = text;
+      }
+      input.focus();
+      input.select();
+      input.setSelectionRange(0, text.length);
+      let copied = false;
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+      if (temporary && copied) input.remove();
+      if (temporary && !copied) setTimeout(() => input.remove(), 15000);
+      if (!copied) throw new Error("clipboard unavailable");
+      return true;
     }
 
     async function api(method, url, body) {
@@ -1141,6 +1362,7 @@
       const hours = Math.floor((seconds % 86400) / 3600);
       if (days > 0) return `${days}天${hours}小时`;
       const minutes = Math.max(0, Math.floor(seconds / 60));
+      if (hours > 0) return `${hours}小时${minutes}分钟`;
       return `${minutes}分钟`;
     }
 
@@ -1227,19 +1449,22 @@
       }
 
       strip.innerHTML = "";
+      const playExpiredIntro = !state.expiredIntroPlayed;
       for (const account of state.accounts) {
         const name = accountName(account);
 		const proxy = proxyText(state.proxyConfigs.get(String(account.id)));
-        const cls = account.rescan_recommended ? "warning" : statusClass(account.status);
-        const status = account.rescan_recommended ? "建议重扫" : statusText(account.status);
+        const isExpired = account.status === "expired";
+        const cls = isExpired ? "expired" : account.rescan_recommended ? "warning" : statusClass(account.status);
+        const status = isExpired ? "已失效" : account.rescan_recommended ? "建议重扫" : statusText(account.status);
         const pendingConfirmation = account.status !== "alive" && account.status !== "expired";
         const button = document.createElement("button");
         button.type = "button";
-        button.className = "account-card";
+        button.className = `account-card ${cls}${isExpired && playExpiredIntro ? " expired-alert" : ""}`;
         button.dataset.openid = account.openid;
+        if (isExpired) button.dataset.stateLabel = "已失效";
         button.setAttribute("aria-pressed", "false");
         const number = accountNumber(account);
-        button.setAttribute("aria-label", `选择账号 ${number}，${name}`);
+        button.setAttribute("aria-label", `选择账号 ${number}，${name}，状态：${status}`);
         button.innerHTML = `
           <span class="avatar">
             <img alt="" src="/accounts/avatar?ref=${encodeURIComponent(account.openid)}">
@@ -1284,6 +1509,7 @@
         }));
         strip.appendChild(button);
       }
+      state.expiredIntroPlayed = true;
       renderStats();
       loadAccountProxySummary();
     }
@@ -1575,9 +1801,10 @@
       button.textContent = "正在生成";
       try {
         const result = await api("POST", "/api/account-links", { kind, ref: String(account.id), ttl_seconds: minutes * 60 });
-        try { await navigator.clipboard.writeText(result.url); } catch { /* 手动复制兜底 */ }
+        let copied = true;
+        try { await copyText(result.url, $("accountLinkURL")); } catch { copied = false; }
         const label = kind === "update" ? "更新链接" : "新增链接";
-        setActivity(`${label}已生成 · ${Math.ceil((result.expires_at - Math.floor(Date.now() / 1000)) / 60)} 分钟有效`);
+        setActivity(`${label}已生成 · ${Math.ceil((result.expires_at - Math.floor(Date.now() / 1000)) / 60)} 分钟有效${copied ? "，已复制" : "，链接已选中，请按 Ctrl+C"}`);
         $("accountLinkDialogTitle").textContent = `${label}已生成`;
         $("accountLinkDialogDescription").textContent = "链接已复制到剪贴板，也可以在下方再次复制或打开。";
         $("accountLinkConfigPane").hidden = true;
@@ -1614,7 +1841,7 @@
         ? `已拦截：该账号已有 ${items.length} 条未消费链接。使用现有链接，或作废后再生成。`
         : `该账号已有 ${items.length} 条未消费链接。`;
       $("accountLinkExistingList").innerHTML = items.map(item => `<div class="link-dialog-existing-row"><span>链接 ${item.id} · 有效期至 ${new Date(item.expires_at * 1000).toLocaleString()}</span><span class="inline-actions"><button class="btn secondary" type="button" data-existing-copy="${item.id}">复制</button><a class="btn secondary" href="${item.url || '#'}" target="_blank" rel="noopener">打开</a><button class="btn secondary" type="button" data-existing-revoke="${item.id}">作废</button></span></div>`).join("");
-      $("accountLinkExistingList").querySelectorAll("[data-existing-copy]").forEach(button => button.onclick = async () => { const item = items.find(entry => String(entry.id) === button.dataset.existingCopy); if (!item?.url) return; try { await navigator.clipboard.writeText(item.url); button.textContent = "已复制"; } catch { setActivity("复制失败，请手动选择链接"); } });
+      $("accountLinkExistingList").querySelectorAll("[data-existing-copy]").forEach(button => button.onclick = async () => { const item = items.find(entry => String(entry.id) === button.dataset.existingCopy); if (!item?.url) return; try { await copyText(item.url); button.textContent = "已复制"; setTimeout(() => { button.textContent = "复制"; }, 1600); } catch { setActivity("链接已选中，请按 Ctrl+C 完成复制"); } });
       $("accountLinkExistingList").querySelectorAll("[data-existing-revoke]").forEach(button => button.onclick = async () => {
         try {
           await api("POST", `/api/account-links/${button.dataset.existingRevoke}/revoke`);
@@ -1821,7 +2048,7 @@
     $("accountLinkDialogClose").addEventListener("click", closeAccountLinkDialog);
     $("accountLinkCancelBtn").addEventListener("click", closeAccountLinkDialog);
     $("accountLinkDoneBtn").addEventListener("click", closeAccountLinkDialog);
-    $("accountLinkCopyBtn").addEventListener("click", async () => { try { await navigator.clipboard.writeText($("accountLinkURL").value); setActivity("授权链接已复制"); $("accountLinkCopyBtn").textContent = "已复制"; setTimeout(() => $("accountLinkCopyBtn").textContent = "复制链接", 1600); } catch { setActivity("复制失败，请手动选择链接"); } });
+    $("accountLinkCopyBtn").addEventListener("click", async () => { try { await copyText($("accountLinkURL").value, $("accountLinkURL")); setActivity("授权链接已复制"); $("accountLinkCopyBtn").textContent = "已复制"; setTimeout(() => $("accountLinkCopyBtn").textContent = "复制链接", 1600); } catch { $("accountLinkURL").focus(); $("accountLinkURL").select(); setActivity("链接已选中，请按 Ctrl+C 完成复制"); } });
     $("accountLinkDialog").addEventListener("cancel", event => { event.preventDefault(); closeAccountLinkDialog(); });
     $("deleteAccountBtn").addEventListener("click", deleteAccount);
     $("saveQingLongBtn").addEventListener("click", saveQingLongConfig);
@@ -1831,10 +2058,10 @@
     $("clearResultBtn").addEventListener("click", () => setResult("结果已清空。", "等待调用", false));
     $("copyResultBtn").addEventListener("click", async () => {
       try {
-        await navigator.clipboard.writeText(state.lastResult || $("resultBox").textContent);
+        await copyText(state.lastResult || $("resultBox").textContent);
         setActivity("结果已复制");
       } catch {
-        setActivity("复制失败，请手动选择结果内容");
+        setActivity("结果已选中，请按 Ctrl+C 完成复制");
       }
     });
 
@@ -1850,6 +2077,6 @@
     loadQingLongConfig();
     setInterval(loadHealth, 15000);
   </script>
-  <script src="/static/js/platform.js?v=20260824-push1"></script>
+  <script src="/static/js/platform.js?v=20260921-ui"></script>
 </body>
 </html>

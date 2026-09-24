@@ -13,40 +13,35 @@ QYWX_TOKEN = __import__("os").getenv("QYWX_TOKEN", "")  # 企业微信机器人 
 
 
 """
-益禾堂小程序（企迈 qmai 平台 + 兑吧 duiba 活动）签到动态 code 版
+迪卡侬小程序动态 code 版 9.17
 
 功能：
   1. 本地 code 服务获取微信 code
-  2. /account-center/oauth/mini-app-login 使用 code 换 qm-user-token
-     （企迈全站 AES-GCM 加密契约，同平台实测脚本验证）
-  3. member/redirect 获取兑吧活动落地页地址（取 302 Set-Cookie 会话）
-  4. getToken 执行混淆 JS 动态计算签到 token（PyExecJS + 本机 JS 运行时）
-  5. doSign 每日签到
-  6. PushPlus / 企业微信推送
-  7. 品赞代理，业务请求优先代理，失败直连兜底
+  2. 登录接口使用 code 换 Bearer token
+  3. 每日签到（CHECK_IN_DAILY，奖励金/积分）
+  4. PushPlus 推送
+  5. 品赞代理，业务请求优先代理，失败直连兜底
 
 环境变量：
   PLUSPLUS_TOKEN    PushPlus token，可选
   QYWX_TOKEN        企业微信机器人 Webhook key，可选（机器人地址 ?key= 后面的值）
   PROXY_API         品赞代理提取 API，可选
   PROXY_TYPE        http / socks5，默认 http
+  CODE_SERVER       覆盖本地 code 服务地址，可选
 
 依赖：
-  pip install requests pycryptodome PyExecJS
-  getToken 需执行混淆 JS，机器上要有可用 JS 运行时（如 node）
+  pip install requests
   socks5 代理需：
   pip install requests[socks]
 
-⚠️ 源脚本为抓包 qm-user-token 型（无登录调用），登录采用企迈平台
-   AES-GCM 加密登录契约（同平台 qmai 脚本实测通过）；源脚本 getToken 返回
-   混淆 JS 需 eval 执行取 window['620fa72t']，本版改用 PyExecJS 执行。
+⚠️ 9.17已完成实机测试，签到功能正常
 """
 
-import base64
+
+
 import json
 import os
 import random
-import re
 import time
 import traceback
 from datetime import datetime
@@ -55,19 +50,9 @@ from urllib.parse import quote
 
 import requests
 
-try:
-    from Crypto.Cipher import AES
-except ImportError:
-    AES = None
 
-try:
-    import execjs
-except ImportError:
-    execjs = None
-
-
-APP_NAME = "益禾堂小程序"
-APPID = "wx4080846d0cec2fd5"
+APP_NAME = "迪卡侬小程序"
+APPID = "wxdbc3f1ac061903dd"
 
 SERVERS = [
     "127.0.0.1:8088",
@@ -86,36 +71,26 @@ PROXY_FETCH_INTERVAL = 3
 ENABLE_DIRECT_FALLBACK = True
 REQUEST_TIMEOUT = 30
 
-QMAI_BASE_URL = "https://webapi.qmai.cn/web"
-QMAI_LOGIN_URL = f"{QMAI_BASE_URL}/account-center/oauth/mini-app-login"
-QMAI_REDIRECT_URL = f"{QMAI_BASE_URL}/catering/crm/member/redirect"
+BASE_URL = "https://api-cn.decathlon.com.cn"
+BFF_BASE_URL = "https://mpm-store.decathlon.com.cn"
+LOGIN_URL = f"{BFF_BASE_URL}/wcc_bff/api/v1/auth/simplify/login"
+VALIDATE_URL = f"{BFF_BASE_URL}/wcc_bff/api/v1/member/member_info/query"
+CHECK_IN_URL = f"{BASE_URL}/membership/membership-portal/mp/api/v1/business-center/reward/CHECK_IN_DAILY"
 
-ACTIVITY_PAGE_URL = "https://86019.activity-12.m.duiba.com.cn/chw/visual-editor/skins?id=203576"
-ACTIVITY_TOKEN_URL = "https://86019-activity.dexfu.cn/chw/ctoken/getToken"
-ACTIVITY_SIGN_URL = "https://86019-activity.dexfu.cn/sign/component/doSign"
-SIGN_OPERATING_ID = "326649747164581"
-STORE_ID = "203009"
+# Values used by the current production mini-program (package 551, 2026-09-17).
+# The BFF login and membership portal use different x-api-key values.
+BFF_API_KEY = "ace22a30-579d-475f-99fc-138b71bc2ab9"
+MEMBERSHIP_API_KEY = "8f3f8d79-8b19-4c79-8f54-4d0cdd1f8426"
+SHOP_ID = "7"
+ETAG = "93cae974-9bbb-48a4-9f5c-afb3ffc830b8"
 
-# —— 企迈全站 AES-GCM 加密固定参数（源自解包 requestEncryptSdk，同平台脚本验证）——
-KEY_RAW = "mN6KpXq8Sv2WxYz9LdFcRgHjMnBvCtDxZaS3QwE5rT0yU7I4O1A"
-KEY_VERSION = "1.0.0"
-META_HEADER = "QM-Encrypt-Meta"
-
-COOKIE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yhtcookie.json")
+COOKIE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dklcookie.json")
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 "
-    "MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI "
-    "MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) "
-    "UnifiedPCWindowsWechat(0xf254173b) XWEB/19027"
-)
-# 签到页请求 UA（源脚本 doSign 使用）
-SIGN_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 "
-    "MicroMessenger/7.0.20.1781 NetType/WIFI MiniProgramEnv/Windows "
-    "WindowsWechat/WMPF XWEB/50249"
+    "MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI "
+    "MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x6309092b) XWEB/9079"
 )
 
 
@@ -156,7 +131,7 @@ def safe_data(resp: Dict[str, Any]) -> Dict[str, Any]:
 def log_title() -> None:
     print()
     print("╔" + "═" * 50 + "╗")
-    print("║ 🧋 益禾堂签到动态 code 版                     ║")
+    print("║ 🏃 迪卡侬小程序动态 code 版                  ║")
     print(f"║ 🕒 启动时间: {now_text():<32}║")
     print(f"║ 🔢 账号数量: {len(SERVERS):<34}║")
     print("╚" + "═" * 50 + "╝")
@@ -390,120 +365,21 @@ def get_code(server: str) -> str | None:
         return None
 
 
-def b64relax(value: str) -> bytes:
-    """宽松 base64 解码（自动补齐 padding）。"""
-    return base64.b64decode(value + "=" * ((4 - len(value) % 4) % 4))
-
-
-def derive_key(raw: str) -> bytes:
-    """解包 M()：宽松 base64 解码，非 32 字节则取前 32 补零。"""
-    try:
-        b = b64relax(raw)
-    except Exception:
-        b = raw.encode("utf-8")
-    if len(b) == 32:
-        return b
-    out = bytearray(32)
-    out[: min(len(b), 32)] = b[:32]
-    return bytes(out)
-
-
-KEY = derive_key(KEY_RAW)
-
-
-def gcm_encrypt(plaintext: str, iv: bytes) -> str:
-    """AES-256-GCM：返回 base64(ciphertext + 16字节tag)。"""
-    cipher = AES.new(KEY, AES.MODE_GCM, nonce=iv)
-    enc, tag = cipher.encrypt_and_digest(plaintext.encode("utf-8"))
-    return base64.b64encode(enc + tag).decode("utf-8")
-
-
-def gcm_decrypt(payload_b64: str, iv: bytes) -> str:
-    buf = base64.b64decode(payload_b64)
-    tag = buf[-16:]
-    data = buf[:-16]
-    cipher = AES.new(KEY, AES.MODE_GCM, nonce=iv)
-    return cipher.decrypt_and_verify(data, tag).decode("utf-8")
-
-
-def common_headers(token: str | None = None) -> Dict[str, str]:
-    """企迈平台固定头（参考源脚本 redirect 请求头与同平台契约）。"""
+def common_headers(token: str | None = None, *, membership: bool = False) -> Dict[str, str]:
     headers = {
         "User-Agent": USER_AGENT,
-        "Accept": "v=1.0",
         "Content-Type": "application/json",
+        "Accept": "*/*",
         "xweb_xhr": "1",
-        "qm-from-type": "catering",
-        "qm-from": "wechat",
-        "scene": "1101",
-        "store-id": STORE_ID,
-        "multi-store-id": "",
-        "accept-language": "zh-CN",
-        "sec-fetch-site": "cross-site",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-dest": "empty",
-        "Referer": f"https://servicewechat.com/{APPID}/517/page-frame.html",
+        "x-api-key": MEMBERSHIP_API_KEY if membership else BFF_API_KEY,
+        "shop-id": SHOP_ID,
+        "Etag": ETAG,
+        "Referer": f"https://servicewechat.com/{APPID}/337/page-frame.html",
+        "Accept-Language": "zh-CN,zh;q=0.9",
     }
     if token:
-        headers["qm-user-token"] = token
+        headers["Authorization"] = token if token.startswith("Bearer ") else f"Bearer {token}"
     return headers
-
-
-def qmai_request(
-    method: str,
-    url: str,
-    body: Dict[str, Any],
-    token: str = "",
-    extra_headers: Dict[str, str] | None = None,
-    proxies: Dict[str, str] | None = None,
-    server: str = "",
-) -> Dict[str, Any]:
-    """企迈加密请求：AES-GCM 请求体 + QM-Encrypt-Meta 头，响应加密时自动解密。"""
-    if AES is None:
-        return {"status": False, "code": -1, "message": "缺少 pycryptodome，请先 pip install pycryptodome"}
-
-    payload_obj = dict(body or {})
-    if not payload_obj.get("appid"):
-        payload_obj["appid"] = APPID
-    iv = os.urandom(12)
-    ts = int(time.time() * 1000)
-    meta = base64.b64encode(
-        json.dumps({
-            "version": KEY_VERSION,
-            "timestamp": ts,
-            "iv": base64.b64encode(iv).decode("utf-8"),
-        }).encode("utf-8")
-    ).decode("utf-8")
-
-    headers = common_headers(token)
-    headers[META_HEADER] = meta
-    if extra_headers:
-        headers.update(extra_headers)
-
-    response = request_with_proxy(
-        method,
-        url,
-        headers=headers,
-        json={"payload": gcm_encrypt(json.dumps(payload_obj), iv)},
-        proxies=proxies,
-        server=server,
-    )
-    try:
-        data = response.json()
-    except Exception:
-        return {"status": False, "code": -1, "message": f"JSON解析失败: {response.text[:300]}"}
-
-    if isinstance(data, dict) and isinstance(data.get("payload"), str):
-        rmeta = response.headers.get(META_HEADER) or response.headers.get(META_HEADER.lower())
-        if not rmeta:
-            return {"status": False, "code": -1, "message": "响应加密但缺少 QM-Encrypt-Meta"}
-        try:
-            meta_obj = json.loads(b64relax(rmeta).decode("utf-8"))
-            return json.loads(gcm_decrypt(data["payload"], b64relax(meta_obj["iv"])))
-        except Exception as exc:
-            return {"status": False, "code": -1, "message": f"响应解密失败: {exc}"}
-
-    return data
 
 
 def extract_token(data: Any) -> str | None:
@@ -515,6 +391,7 @@ def extract_token(data: Any) -> str | None:
         data.get("accessToken"),
         data.get("access_token"),
         data.get("jwt"),
+        data.get("member_token"),
     ]
 
     inner = data.get("data")
@@ -524,6 +401,7 @@ def extract_token(data: Any) -> str | None:
             inner.get("accessToken"),
             inner.get("access_token"),
             inner.get("jwt"),
+            inner.get("member_token"),
         ])
 
         user = inner.get("user")
@@ -544,17 +422,22 @@ def extract_token(data: Any) -> str | None:
 
 def login_by_code(server: str, code: str, proxies: Dict[str, str] | None) -> Tuple[str | None, Dict[str, Any] | None]:
     try:
-        print("🔐 [登录] 使用 code 换 qm-user-token（企迈 AES-GCM 加密登录）")
-        data = qmai_request(
+        print("🔐 [登录] 使用 code 换 token")
+        response = request_with_proxy(
             "POST",
-            QMAI_LOGIN_URL,
-            {"code": code, "eVersion": "1.0"},
+            LOGIN_URL,
+            headers=common_headers(),
+            json={
+                "code": code,
+            },
             proxies=proxies,
             server=server,
         )
-        if not (data.get("status") is True and int(data.get("code") or 0) == 0):
-            print(f"❌ [登录] 接口返回失败: {json_preview(data)}")
-            return None, data
+
+        try:
+            data = response.json()
+        except Exception:
+            data = {"raw": response.text[:800]}
 
         token = extract_token(data)
         if token:
@@ -568,11 +451,11 @@ def login_by_code(server: str, code: str, proxies: Dict[str, str] | None) -> Tup
         return None, None
 
 
-def api_get(server: str, url: str, token: str | None, proxies: Dict[str, str] | None) -> Dict[str, Any]:
+def api_get(server: str, url: str, token: str, proxies: Dict[str, str] | None) -> Dict[str, Any]:
     response = request_with_proxy(
         "GET",
         url,
-        headers=common_headers(token),
+        headers=common_headers(token, membership=url.startswith(f"{BASE_URL}/membership/")),
         proxies=proxies,
         server=server,
     )
@@ -580,30 +463,27 @@ def api_get(server: str, url: str, token: str | None, proxies: Dict[str, str] | 
         return response.json()
     except Exception:
         return {
-            "status": False,
             "code": -1,
-            "message": f"JSON解析失败: {response.text[:300]}",
+            "msg": f"JSON解析失败: {response.text[:300]}",
         }
 
 
-def api_post(
-    server: str,
-    url: str,
-    token: str | None,
-    proxies: Dict[str, str] | None,
-    payload: Dict[str, Any],
-    extra_headers: Dict[str, str] | None = None,
-) -> Dict[str, Any]:
-    """业务 POST：企迈接口走 AES-GCM 加密请求。"""
-    return qmai_request(
+def api_post(server: str, url: str, token: str, proxies: Dict[str, str] | None, payload: Dict[str, Any]) -> Dict[str, Any]:
+    response = request_with_proxy(
         "POST",
         url,
-        payload,
-        token=token or "",
-        extra_headers=extra_headers,
+        headers=common_headers(token, membership=url.startswith(f"{BASE_URL}/membership/")),
+        json=payload,
         proxies=proxies,
         server=server,
     )
+    try:
+        return response.json()
+    except Exception:
+        return {
+            "code": -1,
+            "msg": f"JSON解析失败: {response.text[:300]}",
+        }
 
 
 # ====================== Token缓存管理 ======================
@@ -647,13 +527,13 @@ def set_cached_token(server: str, token: str, expire_time: str) -> None:
 
 
 def login_with_cache(server: str, proxies: Dict[str, str] | None) -> Tuple[str | None, Dict[str, Any] | None]:
-    """优先使用缓存 token（member/redirect 接口验证），失效自动 code 刷新"""
+    """优先使用缓存 token（会员信息接口验证，接口为推断），失效自动 code 刷新"""
     cache_token = get_cached_token(server)
     if cache_token:
         print("🔍 [缓存] 验证 token")
         try:
-            redirect_resp = api_post(server, QMAI_REDIRECT_URL, cache_token, proxies, {"redirectUrl": ACTIVITY_PAGE_URL})
-            if redirect_resp.get("status") is True and redirect_resp.get("data"):
+            info_resp = api_get(server, VALIDATE_URL, cache_token, proxies)
+            if str(info_resp.get("code")) == "0":
                 print("✅ [缓存] token 有效")
                 return cache_token, None
         except Exception as exc:
@@ -684,91 +564,16 @@ def login_with_cache(server: str, proxies: Dict[str, str] | None) -> Tuple[str |
     return token, raw_login
 
 
-def fetch_activity_cookie(server: str, activity_url: str, proxies: Dict[str, str] | None) -> str:
-    """访问活动落地页，取 302 Set-Cookie 中 wdata4/w_ts/_ac/wdata3/dcustom 组成会话。"""
-    try:
-        response = request_with_proxy(
-            "GET",
-            activity_url,
-            headers={
-                "User-Agent": USER_AGENT,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
-            proxies=proxies,
-            server=server,
-            allow_redirects=False,
-        )
-        set_cookies: List[str] = []
-        raw = getattr(response, "raw", None)
-        header_obj = getattr(raw, "headers", None)
-        if header_obj is not None:
-            try:
-                set_cookies = header_obj.getlist("Set-Cookie")
-            except Exception:
-                set_cookies = []
-        if not set_cookies:
-            merged = response.headers.get("Set-Cookie", "")
-            if merged:
-                set_cookies = [merged]
-
-        joined = "".join(set_cookies)
-        parts = re.findall(r"(?:wdata4|w_ts|_ac|wdata3|dcustom)=[^;]*;", joined)
-        if not parts:
-            print(f"⚠️ [活动] 未提取到活动 Cookie: {json_preview(set_cookies, 300)}")
-            return ""
-        if len(parts) < 5:
-            print(f"⚠️ [活动] 活动 Cookie 不完整（{len(parts)}/5），继续尝试")
-        print("✅ [活动] 获取活动 token（Cookie）成功")
-        return "".join(parts)
-    except Exception as exc:
-        print(f"❌ [活动] 获取活动 Cookie 异常: {exc}")
-        return ""
-
-
-def get_activity_key(server: str, session_cookie: str, proxies: Dict[str, str] | None) -> str:
-    """getToken：返回混淆 JS，eval 执行后取 window['620fa72t']（需 PyExecJS + JS 运行时）。"""
-    if execjs is None:
-        print("❌ [签到] getToken 需执行混淆 JS：请 pip install PyExecJS 并确保本机有 node/js 运行时")
-        return ""
-    try:
-        response = request_with_proxy(
-            "POST",
-            ACTIVITY_TOKEN_URL,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "User-Agent": SIGN_USER_AGENT,
-                "Cookie": session_cookie,
-            },
-            data={"timestamp": int(time.time() * 1000)},
-            proxies=proxies,
-            server=server,
-        )
-        result = response.json()
-        if not result.get("success"):
-            print(f"❌ [签到] getToken 失败: {json_preview(result, 300)}")
-            return ""
-        # 源脚本：把旧式八进制字面量 (如 0123) 修复为 0o123 后 eval，取 window['620fa72t']
-        fixed_code = re.sub(r"\b0([0-7]+)\b", r"0o\1", str(result.get("token") or ""))
-        context = execjs.compile("var window = {};\n" + fixed_code)
-        key = context.eval("window['620fa72t']")
-        if not key:
-            print("❌ [签到] getToken 解析结果为空")
-            return ""
-        print("✅ [签到] 获取签到 token 成功")
-        return str(key)
-    except Exception as exc:
-        print(f"❌ [签到] getToken 异常: {exc}")
-        return ""
-
-
 def run_account(index: int, total: int, server: str) -> Dict[str, Any]:
     result = {
         "server": server,
         "success": False,
+        "skipped": False,
         "proxyStatus": "未使用代理",
         "proxyIp": "-",
         "token": "-",
         "signMsg": "-",
+        "pointsMsg": "-",
         "error": "",
     }
 
@@ -792,77 +597,38 @@ def run_account(index: int, total: int, server: str) -> Dict[str, Any]:
     result["token"] = mask(token)
 
     try:
-        # 1. member/redirect 获取活动落地页地址
-        redirect_resp = api_post(server, QMAI_REDIRECT_URL, token, proxies, {"redirectUrl": ACTIVITY_PAGE_URL})
-        if not (redirect_resp.get("status") is True and redirect_resp.get("data")):
-            result["error"] = f"获取活动地址失败: {json_preview(redirect_resp, 300)}"
-            print(f"❌ [活动] {result['error']}")
+        wait_time = random.randint(2, 5)
+        print(f"⏳ [签到] 提交前等待 {wait_time}s")
+        sleep(wait_time)
+
+        # 照源脚本：POST CHECK_IN_DAILY，code == 0 成功，code 含 1006 今日已签到
+        sign_resp = api_post(server, CHECK_IN_URL, token, proxies, {})
+        code_val = sign_resp.get("code")
+
+        if str(code_val) == "0":
+            data = safe_data(sign_resp)
+            point_change = data.get("point_change", 0)
+            point_balance = data.get("point_balance", 0)
+            result["signMsg"] = "签到成功"
+            result["pointsMsg"] = f"获取积分 {point_change}，当前可用积分 {point_balance}"
+            print(f"✅ [签到] 签到成功，获取积分： {point_change}。当前可用积分：{point_balance}")
+        elif "1006" in str(code_val):
+            msg = sign_resp.get("msg") or json_preview(sign_resp, 300)
+            result["signMsg"] = "今日已签到"
+            result["pointsMsg"] = str(msg)
+            print(f"⚠️ [签到] 今日已签到 {msg}")
+        elif str(code_val) == "Portal_2":
+            result["skipped"] = True
+            result["signMsg"] = "非迪卡侬会员，跳过签到"
+            result["pointsMsg"] = "请先在小程序注册/绑定会员"
+            print(f"⚠️ [签到] {result['signMsg']}")
             return result
-        activity_url = str(redirect_resp["data"])
-        print(f"🎯 [活动] 活动地址: {activity_url}")
-
-        sleep(random.uniform(1.0, 2.0))
-
-        # 2. 访问活动页取会话 Cookie
-        session_cookie = fetch_activity_cookie(server, activity_url, proxies)
-        if not session_cookie:
-            result["error"] = "获取活动会话 Cookie 失败"
-            print(f"❌ [活动] {result['error']}")
-            return result
-
-        sleep(random.uniform(1.0, 2.0))
-
-        # 3. getToken 动态计算签到 token
-        key = get_activity_key(server, session_cookie, proxies)
-        if not key:
-            result["error"] = "getToken 失败（需 PyExecJS 与本机 JS 运行时）"
-            print(f"❌ [签到] {result['error']}")
-            return result
-
-        sleep(random.uniform(1.0, 2.0))
-
-        # 4. doSign 签到
-        sign_resp = request_with_proxy(
-            "POST",
-            f"{ACTIVITY_SIGN_URL}?_={int(time.time() * 1000)}",
-            headers={
-                "User-Agent": SIGN_USER_AGENT,
-                "Accept": "application/json, text/plain, */*",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Origin": "https://86019-activity.dexfu.cn",
-                "Referer": f"https://86019-activity.dexfu.cn/sign/component/page?signOperatingId={SIGN_OPERATING_ID}",
-                "accept-language": "zh-CN,zh;q=0.9",
-                "Cookie": session_cookie,
-            },
-            data={
-                "signOperatingId": SIGN_OPERATING_ID,
-                "token": key,
-            },
-            proxies=proxies,
-            server=server,
-        )
-        try:
-            sign_json = sign_resp.json()
-        except Exception:
-            sign_json = {"success": False, "data": sign_resp.text[:300]}
-
-        if sign_json.get("success") is True:
-            sign_data = sign_json.get("data")
-            if isinstance(sign_data, dict) and sign_data.get("signResult") not in (None, ""):
-                result["signMsg"] = f"签到成功，获得{sign_data['signResult']}积分"
-            elif sign_data:
-                result["signMsg"] = f"签到成功: {json_preview(sign_data, 200)}"
-            else:
-                result["signMsg"] = "签到成功"
-            print(f"✅ [签到] {result['signMsg']}")
         else:
-            preview = json_preview(sign_json, 300)
-            if re.search(r"已签|已经签|签到过|重复|已完成", preview):
-                result["signMsg"] = "今日已签到"
-                print(f"✅ [签到] {result['signMsg']}")
-            else:
-                result["signMsg"] = f"签到失败: {preview}"
-                print(f"❌ [签到] {result['signMsg']}")
+            msg = sign_resp.get("msg") or json_preview(sign_resp, 300)
+            result["signMsg"] = f"签到失败: {msg}"
+            result["error"] = result["signMsg"]
+            print(f"❌ [签到] {result['signMsg']}")
+            return result
 
         result["success"] = True
         return result
@@ -875,26 +641,29 @@ def run_account(index: int, total: int, server: str) -> Dict[str, Any]:
 
 def build_notify(results: List[Dict[str, Any]]) -> str:
     success_count = sum(1 for item in results if item["success"])
-    fail_count = len(results) - success_count
+    skipped_count = sum(1 for item in results if item.get("skipped"))
+    fail_count = len(results) - success_count - skipped_count
 
-    content = f"""🧋 益禾堂任务结果
+    content = f"""🏃 迪卡侬小程序任务结果
 
 ━━━━━━━━━━━━━━━━━━━━
-🏁 总结：{success_count} 成功 / {fail_count} 失败
+🏁 总结：{success_count} 成功 / {skipped_count} 跳过 / {fail_count} 失败
 🕒 时间：{now_text()}
 ━━━━━━━━━━━━━━━━━━━━
 """
 
     for idx, res in enumerate(results, 1):
-        icon = "✅" if res["success"] else "❌"
+        icon = "✅" if res["success"] else ("⚠️" if res.get("skipped") else "❌")
+        status_text = "成功" if res["success"] else ("跳过" if res.get("skipped") else "失败")
 
         content += f"""
 🧩 账号 {idx}
 📝 签到：{res["signMsg"]}
-{icon} 结果：{"成功" if res["success"] else "失败"}
+🎯 积分：{res["pointsMsg"]}
+{icon} 结果：{status_text}
 """
 
-        if not res["success"]:
+        if not res["success"] and not res.get("skipped"):
             content += f"❌ 原因：{res['error']}\n"
 
         content += "━━━━━━━━━━━━━━━━━━━━\n"
@@ -916,10 +685,12 @@ def main() -> None:
             results.append({
                 "server": server,
                 "success": False,
+                "skipped": False,
                 "proxyStatus": "-",
                 "proxyIp": "-",
                 "token": "-",
                 "signMsg": "-",
+                "pointsMsg": "-",
                 "error": traceback.format_exc().strip(),
             })
 
@@ -928,17 +699,19 @@ def main() -> None:
             sleep(2)
 
     success_count = sum(1 for item in results if item["success"])
-    fail_count = len(results) - success_count
+    skipped_count = sum(1 for item in results if item.get("skipped"))
+    fail_count = len(results) - success_count - skipped_count
 
     print()
     print("╔" + "═" * 50 + "╗")
-    print("║ 🏁 益禾堂任务执行完成                        ║")
+    print("║ 🏁 迪卡侬任务执行完成                        ║")
     print(f"║ ✅ 成功: {success_count:<39}║")
+    print(f"║ ⚠️ 跳过: {skipped_count:<39}║")
     print(f"║ ❌ 失败: {fail_count:<39}║")
     print(f"║ 🕒 结束时间: {now_text():<32}║")
     print("╚" + "═" * 50 + "╝")
 
-    send_pushplus("🧋 益禾堂任务完成", build_notify(results))
+    send_pushplus("🏃 迪卡侬任务完成", build_notify(results))
 
 
 # --- YYB compatibility layer (managed) ---
