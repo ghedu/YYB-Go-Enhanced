@@ -47,7 +47,7 @@ type Pool struct {
 	db  *store.DB
 
 	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	locks map[string]chan struct{}
 	// codeLocks serialize wx.login requests for one account. Different
 	// accounts keep running concurrently, while a single account cannot have
 	// two one-time login codes consumed at the same time.
@@ -80,7 +80,7 @@ func NewPool(cfg Config, db *store.DB) *Pool {
 	return &Pool{
 		cfg:          cfg,
 		db:           db,
-		locks:        map[string]*sync.Mutex{},
+		locks:        map[string]chan struct{}{},
 		codeLocks:    map[int64]chan struct{}{},
 		loginSem:     make(chan struct{}, cfg.MaxLoginConcurrency),
 		shortlinkSem: make(chan struct{}, cfg.MaxShortlinkConcurrency),
@@ -114,12 +114,41 @@ func (p *Pool) getCode(ctx context.Context, loginBuffer, appID string, accountID
 		}
 		return map[string]any{"code": string(code), "errMsg": "login:ok"}, nil
 	}
-	result, err := p.run(ctx, loginBuffer, accountID, tcpProxy, fallbackDirect, call)
-	if err != nil || result["code"] != "" {
+	return retryLoginCode(ctx, func() (map[string]any, error) {
+		return p.run(ctx, loginBuffer, accountID, tcpProxy, fallbackDirect, call)
+	}, func() error {
+		if err := p.Invalidate(ctx, accountID, tcpProxy); err != nil {
+			return err
+		}
+		if tcpProxy != "" && fallbackDirect {
+			return p.Invalidate(ctx, accountID, "")
+		}
+		return nil
+	})
+}
+
+// Only wx.login may rebuild a stale session and retry once. Never replay
+// arbitrary OperateWXData operations, which can have side effects.
+func retryLoginCode(ctx context.Context, call func() (map[string]any, error), invalidate func() error) (map[string]any, error) {
+	result, err := call()
+	emptyCode := err == nil && (result == nil || result["code"] == nil || result["code"] == "")
+	if !emptyCode && !errors.Is(err, ErrShortlinkPayload) {
 		return result, err
 	}
-	_ = p.Invalidate(ctx, accountID, tcpProxy)
-	return p.run(ctx, loginBuffer, accountID, tcpProxy, fallbackDirect, call)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if resetErr := invalidate(); resetErr != nil {
+		return nil, fmt.Errorf("reset code session: %w", resetErr)
+	}
+	result, err = call()
+	if err != nil {
+		return nil, fmt.Errorf("code retry after session rebuild failed: %w", err)
+	}
+	if result == nil || result["code"] == nil || result["code"] == "" {
+		return nil, fmt.Errorf("wx.login returned empty code after session rebuild")
+	}
+	return result, nil
 }
 
 func (p *Pool) GetPhoneNumber(ctx context.Context, loginBuffer, appID string, accountID int64, tcpProxy string, fallbackDirect bool) (map[string]any, error) {
@@ -180,14 +209,19 @@ func (p *Pool) run(ctx context.Context, loginBuffer string, accountID int64, tcp
 }
 
 func (p *Pool) state(ctx context.Context, loginBuffer string, accountID int64, tcpProxy string, fallbackDirect bool) (WmpfSession, error) {
+	// Include the queue wait in the login budget, not just the socket work.
+	ctx, cancel := context.WithTimeout(ctx, p.cfg.LoginTimeout)
+	defer cancel()
 	if row, err := p.db.GetSession(ctx, accountID, tcpProxy); err == nil {
 		return sessionFromBlob(row.SessionBlob)
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return WmpfSession{}, err
 	}
 	lock := p.lockFor(fmt.Sprintf("%d\x00%s", accountID, tcpProxy))
-	lock.Lock()
-	defer lock.Unlock()
+	if err := acquire(ctx, lock); err != nil {
+		return WmpfSession{}, err
+	}
+	defer release(lock)
 	if row, err := p.db.GetSession(ctx, accountID, tcpProxy); err == nil {
 		return sessionFromBlob(row.SessionBlob)
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -201,9 +235,7 @@ func (p *Pool) state(ctx context.Context, loginBuffer string, accountID int64, t
 		return WmpfSession{}, err
 	}
 	defer release(p.loginSem)
-	loginCtx, cancel := context.WithTimeout(ctx, p.cfg.LoginTimeout)
-	defer cancel()
-	st, err := p.loginAndSession(loginCtx, loginBuffer, tcpProxy, fallbackDirect)
+	st, err := p.loginAndSession(ctx, loginBuffer, tcpProxy, fallbackDirect)
 	if err != nil {
 		return WmpfSession{}, err
 	}
@@ -217,13 +249,13 @@ func (p *Pool) state(ctx context.Context, loginBuffer string, accountID int64, t
 	return st, nil
 }
 
-func (p *Pool) lockFor(key string) *sync.Mutex {
+func (p *Pool) lockFor(key string) chan struct{} {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if l := p.locks[key]; l != nil {
 		return l
 	}
-	l := &sync.Mutex{}
+	l := make(chan struct{}, 1)
 	p.locks[key] = l
 	return l
 }
@@ -243,81 +275,102 @@ func (p *Pool) loginAndSession(ctx context.Context, loginBuffer, tcpProxy string
 	if loginBuffer == "" {
 		return WmpfSession{}, fmt.Errorf("login_buffer is empty")
 	}
-	targets, err := getLonglinkTargets(ctx, p.cfg.LoginTimeout, p.cfg.DNSCacheTTL)
+	// HTTPDNS is optional: leave time for the official hostname fallback when
+	// both HTTPDNS endpoints are unreachable.
+	dnsTimeout := min(p.cfg.ShortlinkTimeout, p.cfg.LoginTimeout/3)
+	dnsCtx, cancelDNS := context.WithTimeout(ctx, dnsTimeout)
+	targets, err := getLonglinkTargets(dnsCtx, dnsTimeout, p.cfg.DNSCacheTTL)
+	cancelDNS()
 	if err != nil {
 		return WmpfSession{}, fmt.Errorf("HTTPDNS LongLink failed: %w", err)
 	}
 	targets = orderLonglinkTargets(targets, 6)
+	st, err := tryLonglinkCandidates(ctx, targets, p.cfg.LoginTimeout, func(attemptCtx context.Context, target Target) (WmpfSession, error) {
+		return p.loginTarget(attemptCtx, target, loginBuffer, tcpProxy, fallbackDirect)
+	})
+	if err != nil {
+		return WmpfSession{}, err
+	}
+	st.ShortlinkTargets = getShortlinkTargets(ctx, p.cfg.ShortlinkTimeout, p.cfg.DNSCacheTTL)
+	return st, nil
+}
+
+func tryLonglinkCandidates(ctx context.Context, targets []Target, timeout time.Duration, login func(context.Context, Target) (WmpfSession, error)) (WmpfSession, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	var last error
-	for _, t := range targets {
-		mc, err := connectMmtls(ctx, t, p.cfg.LoginTimeout, tcpProxy, fallbackDirect)
-		if err != nil {
-			last = err
-			continue
+	for i, t := range targets {
+		if err := ctx.Err(); err != nil {
+			return WmpfSession{}, fmt.Errorf("LongLink login cancelled after %d/%d candidates: %w", i, len(targets), errors.Join(err, last))
 		}
-		defer mc.close()
-		meta, err := parseLoginBuffer(loginBuffer)
-		if err != nil {
-			return WmpfSession{}, err
+		// Split the remaining budget across candidates, so one silent endpoint
+		// cannot consume all the time reserved for fallback addresses/ports.
+		deadline, _ := ctx.Deadline()
+		attemptCtx, cancelAttempt := context.WithTimeout(ctx, time.Until(deadline)/time.Duration(len(targets)-i))
+		st, err := login(attemptCtx, t)
+		cancelAttempt()
+		if err == nil {
+			return st, nil
 		}
-		appDeviceID, err := randomAppDeviceID()
-		if err != nil {
-			return WmpfSession{}, err
-		}
-		temp := &manualAuthTemp{}
-		body, err := buildLoginBody(loginBuffer, meta.DeviceID, appDeviceID, temp)
-		if err != nil {
-			return WmpfSession{}, err
-		}
-		if err = mc.sendApp(cmdManualAuth, body); err != nil {
-			last = err
-			continue
-		}
-		resp, err := mc.recvApp()
-		if err != nil {
-			last = err
-			continue
-		}
-		if resp.Cmd != cmdManualAuth {
-			last = fmt.Errorf("manualauth failed: cmd=%d", resp.Cmd)
-			continue
-		}
-		mar, err := parseLoginResponse(resp.Body, temp)
-		if err != nil {
-			last = err
-			continue
-		}
-		appSess, err := extractSession(mar)
-		if err != nil {
-			last = err
-			continue
-		}
-		appSess.DeviceID = meta.DeviceID
-		appSess.HostAppID = meta.HostAppID
-		psks, err := mc.extractPSKs()
-		if err != nil {
-			last = err
-			continue
-		}
-		psk, ok := pickAccessPSK(psks)
-		if !ok {
-			last = fmt.Errorf("login finished but no access PSK was issued")
-			continue
-		}
-		shortTargets := getShortlinkTargets(ctx, p.cfg.ShortlinkTimeout, p.cfg.DNSCacheTTL)
-		return WmpfSession{
-			Session:          appSess,
-			PSK:              psk,
-			ShortlinkTargets: shortTargets,
-			CreatedAt:        time.Now(),
-			TCPProxy:         tcpProxy,
-			FallbackDirect:   fallbackDirect,
-		}, nil
+		last = fmt.Errorf("candidate %d/%d %s:%d: %w", i+1, len(targets), t.IP, t.Port, err)
 	}
 	if last == nil {
 		last = fmt.Errorf("no LongLink candidates")
 	}
 	return WmpfSession{}, fmt.Errorf("all LongLink candidates failed: %w", last)
+}
+
+func (p *Pool) loginTarget(ctx context.Context, target Target, loginBuffer, tcpProxy string, fallbackDirect bool) (WmpfSession, error) {
+	mc, err := connectMmtls(ctx, target, p.cfg.LoginTimeout, tcpProxy, fallbackDirect)
+	if err != nil {
+		return WmpfSession{}, err
+	}
+	defer mc.close()
+	meta, err := parseLoginBuffer(loginBuffer)
+	if err != nil {
+		return WmpfSession{}, err
+	}
+	appDeviceID, err := randomAppDeviceID()
+	if err != nil {
+		return WmpfSession{}, err
+	}
+	temp := &manualAuthTemp{}
+	body, err := buildLoginBody(loginBuffer, meta.DeviceID, appDeviceID, temp)
+	if err != nil {
+		return WmpfSession{}, err
+	}
+	if err = mc.sendApp(cmdManualAuth, body); err != nil {
+		return WmpfSession{}, fmt.Errorf("manualauth send: %w", err)
+	}
+	resp, err := mc.recvApp()
+	if err != nil {
+		return WmpfSession{}, fmt.Errorf("manualauth response: %w", err)
+	}
+	if resp.Cmd != cmdManualAuth {
+		return WmpfSession{}, fmt.Errorf("manualauth failed: cmd=%d", resp.Cmd)
+	}
+	mar, err := parseLoginResponse(resp.Body, temp)
+	if err != nil {
+		return WmpfSession{}, err
+	}
+	appSess, err := extractSession(mar)
+	if err != nil {
+		return WmpfSession{}, err
+	}
+	appSess.DeviceID = meta.DeviceID
+	appSess.HostAppID = meta.HostAppID
+	psks, err := mc.extractPSKs()
+	if err != nil {
+		return WmpfSession{}, err
+	}
+	psk, ok := pickAccessPSK(psks)
+	if !ok {
+		return WmpfSession{}, fmt.Errorf("login finished but no access PSK was issued")
+	}
+	return WmpfSession{
+		Session: appSess, PSK: psk, CreatedAt: time.Now(),
+		TCPProxy: tcpProxy, FallbackDirect: fallbackDirect,
+	}, nil
 }
 
 func (p *Pool) sendEnvelope(ctx context.Context, st WmpfSession, envelope []byte) ([]byte, []byte, error) {

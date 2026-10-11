@@ -36,6 +36,26 @@ func TestRunsPageExposesAccountPushSettings(t *testing.T) {
 	if nav.Code != http.StatusOK || !strings.Contains(nav.Body.String(), `["/runs?view=push", "push", "独立推送"`) {
 		t.Fatalf("platform navigation does not expose independent push settings: %d %s", nav.Code, nav.Body.String())
 	}
+	for _, marker := range []string{"platformUpdateDialog", "下载 ${runtimeInfo.label", "更新到 v${updateTarget} 并重启", `/api/maintenance${check ? "?check=1" : ""}`} {
+		if !strings.Contains(nav.Body.String(), marker) {
+			t.Fatalf("platform update marker %q missing", marker)
+		}
+	}
+}
+
+func TestHealthEndpointsRemainPublicWithAuthEnabled(t *testing.T) {
+	app, err := NewApp(Config{ResourceRoot: t.TempDir(), AdminUser: "health-test", AdminPassword: "local-test-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	for _, path := range []string{"/health", "/healthz"} {
+		response := httptest.NewRecorder()
+		app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"ok":true`) {
+			t.Fatalf("anonymous %s: %d %s", path, response.Code, response.Body.String())
+		}
+	}
 }
 
 func TestHandlerServesGinRoutesAndSwaggerDocs(t *testing.T) {
@@ -70,6 +90,11 @@ func TestHandlerServesGinRoutesAndSwaggerDocs(t *testing.T) {
 	}
 	if healthBody.Code != 0 || healthBody.Msg != "success" || healthBody.Data["ok"] != true {
 		t.Fatalf("GET /health body = %#v", healthBody)
+	}
+	legacyHealth := httptest.NewRecorder()
+	handler.ServeHTTP(legacyHealth, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if legacyHealth.Code != http.StatusOK || legacyHealth.Body.String() != health.Body.String() {
+		t.Fatalf("legacy health endpoint differs: status=%d body=%s", legacyHealth.Code, legacyHealth.Body.String())
 	}
 
 	versionResponse := httptest.NewRecorder()
@@ -222,9 +247,10 @@ func TestNormalizeEncryptKeyPayload(t *testing.T) {
 		in   map[string]any
 		want string
 	}{
-		{name: "top level client name", in: map[string]any{"api_name": "getLatestUserKey", "data": map[string]any{"appid": "wx-test"}}, want: "getUserEncryptKey"},
-		{name: "nested client name", in: map[string]any{"data": map[string]any{"api_name": "getLatestUserKey", "version": 2}}, want: "getUserEncryptKey"},
-		{name: "server name unchanged", in: map[string]any{"api_name": "getUserEncryptKey"}, want: "getUserEncryptKey"},
+		{name: "top level client name", in: map[string]any{"api_name": "getLatestUserKey", "data": map[string]any{"appid": "wx-test"}}, want: encryptKeyOperation},
+		{name: "nested client name", in: map[string]any{"data": map[string]any{"api_name": "getLatestUserKey", "version": 2}}, want: encryptKeyOperation},
+		{name: "legacy server name", in: map[string]any{"api_name": "getUserEncryptKey"}, want: encryptKeyOperation},
+		{name: "server name unchanged", in: map[string]any{"api_name": encryptKeyOperation}, want: encryptKeyOperation},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
