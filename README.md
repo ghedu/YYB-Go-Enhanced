@@ -38,7 +38,7 @@
 | 脚本管理 | 统一收录审核后的 YYB 多账号脚本；支持整库同步、单脚本拉取、拉取并创建任务 |
 | 部署维护 | Docker Compose、Android ARM64 Magisk、跨平台内嵌资源二进制；按运行平台提供更新入口 |
 
-v0.2.29 支持按账号设置“保活走代理、小程序调用直连”，在「代理设置 → 小程序调用出口」选择；默认仍跟随账号代理。保留 v0.2.28 的 LongLink 多地址/端口回退改进，排查见[代理与账号保活](docs/proxy-keepalive.md#保活成功但-getcode-超时)。手机号接口目前不支持列出或指定微信内的授权号码，详见[协议说明](docs/protocol-api.md#用户信息与手机号)。
+v0.2.33 修复部分错误文本将账号误标为永久失效的问题：仅 access token 到期、代理 token 或传输错误保留重试，详见[约两小时失效排查](docs/proxy-keepalive.md#约两小时后失效的排查96)。新增[脚本可用性记录](scripts/README.md#脚本可用性记录97-2026-10-19)，标注验证日期与实际范围，未验证脚本不默认视为可用。v0.2.32 的[管理员本地密码恢复](docs/configuration.md#忘记管理员密码v0232-起)、[LongLink 域名回退](docs/proxy-keepalive.md#保活成功但-getcode-超时)、[呆呆变量按 ID 更新](docs/panel-integration.md#重复变量处理)与“保活走代理、小程序调用直连”继续保留。
 
 ## 部署选择
 
@@ -132,6 +132,8 @@ bash /ql/data/scripts/yyb-scriptctl.sh install 麦富迪_code版.py \
 脚本来源、目录覆盖、任务去重和 Issue #66 的任务名修复说明见 [脚本管理文档](scripts/README.md#青龙脚本拉取工具)。
 
 手动上传的脚本不出现在“全部脚本”中？列表读取已配置目录内的**面板任务**，不是文件浏览器。请按[独立上传脚本接入步骤](docs/panel-integration.md#独立上传的脚本不在全部脚本里issue-73)配置目录、创建任务，再刷新列表。
+
+新增脚本集合后仍未显示？按[目录配置排查](docs/panel-integration.md#新增脚本集合后仍不显示issue-100)核对真实任务路径、Compose 变量覆盖和容器内生效值；仅重启容器不会加载修改后的环境变量。
 
 ## 调用协议接口
 
