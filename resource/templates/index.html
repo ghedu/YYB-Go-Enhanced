@@ -505,6 +505,10 @@
       gap: 8px;
     }
 
+    .account-header-tools { display:flex;align-items:center;gap:7px;flex-shrink:0; }
+    .scan-channel-badge { display:inline-flex;align-items:center;justify-content:center;width:23px;height:23px;border:1px solid var(--border,#d9e3e5);border-radius:7px;background:#fff; }
+    .scan-channel-badge img { width:17px;height:17px;object-fit:contain; }
+
     .account-name {
       min-width: 0;
       overflow: hidden;
@@ -610,6 +614,11 @@
       font-size: 12px;
       font-weight: 680;
     }
+
+    .protocol-token-control { display: flex; gap: 8px; }
+    .protocol-token-control .input { min-width: 0; }
+    .protocol-token-control .btn { flex-shrink: 0; }
+    #protocolTokenInput[aria-invalid="true"] { border-color: var(--danger); }
 
     .input,
     .select,
@@ -984,6 +993,7 @@
           </div>
           <div class="panel-actions">
             <button class="btn secondary" id="reloadAccountsBtn" type="button">重新加载</button>
+            <button class="btn secondary" id="mergeAccountsBtn" type="button">合并账号</button>
             <button class="btn secondary" id="addAccountLinkBtn" type="button" title="生成只能录入新 YYB 账号的一次性扫码链接">新增链接</button>
             <a class="btn primary" href="/scan">新增账号</a>
           </div>
@@ -1036,8 +1046,17 @@
             </div>
             <div class="form-grid">
               <div class="field">
+                <label for="protocolTokenInput">协议令牌（可选）</label>
+                <div class="protocol-token-control">
+                  <input class="input" id="protocolTokenInput" type="password" placeholder="已配置 YYB_PROTOCOL_TOKEN 时填写" autocomplete="off" spellcheck="false" aria-describedby="protocolTokenHelp">
+                  <button class="btn secondary" id="clearProtocolTokenBtn" type="button">清除令牌</button>
+                </div>
+                <span class="field-note" id="protocolTokenHelp">仅用于接口测试，刷新后清空。</span>
+              </div>
+              <div class="field">
                 <label for="featureSel">能力</label>
-                <select class="select" id="featureSel"></select>
+                <select class="select" id="featureSel" aria-describedby="featureHint"></select>
+                <span class="field-note" id="featureHint" aria-live="polite"></span>
               </div>
               <div class="field">
                 <label for="appidInput" id="appidLabel">APPID</label>
@@ -1060,7 +1079,7 @@
               </div>
               <div class="field hidden" id="payloadGroup">
                 <label for="payloadInput">请求 JSON</label>
-                <textarea class="textarea" id="payloadInput" spellcheck="false">{"api_name":"getUserInfo","data":{},"env":1}</textarea>
+                <textarea class="textarea" id="payloadInput" spellcheck="false" placeholder="粘贴目标小程序的完整 operateWxData JSON"></textarea>
               </div>
             </div>
             <div class="inline-actions">
@@ -1148,6 +1167,16 @@
     </main>
   </div>
 
+  <dialog class="link-dialog" id="mergeAccountDialog" aria-labelledby="mergeAccountTitle">
+    <div class="link-dialog-body">
+      <div class="link-dialog-head"><div><h2 id="mergeAccountTitle">合并误新增账号</h2><p>将误新增账号的授权移入原 ID，不按昵称自动判断身份。</p></div><button class="link-dialog-close" id="mergeAccountClose" type="button" aria-label="关闭合并">×</button></div>
+      <div class="field"><label for="mergeSourceAccount">来源账号（合并后删除此 ID）</label><select class="input" id="mergeSourceAccount"></select></div>
+      <div class="field"><label for="mergeTargetAccount">保留的原账号 ID</label><select class="input" id="mergeTargetAccount"></select></div>
+      <p class="link-dialog-footnote">保留原 ID 的代理、归属、备注、任务和推送设置，替换其登录授权并清理旧会话及授权链接。请确认两条记录属于你的同一微信；手动维护的来源 ID / 旧 OpenID 引用需要更新。</p>
+      <p class="link-dialog-footnote" id="mergeAccountPreview" role="status">先预览，再确认合并。来源有专属任务时需先处理任务。</p>
+      <div class="inline-actions" style="margin-top:16px"><button class="btn secondary" id="mergeAccountPreviewBtn" type="button">预览合并</button><button class="btn danger" id="mergeAccountConfirmBtn" type="button" disabled>确认合并</button></div>
+    </div>
+  </dialog>
   <dialog class="link-dialog" id="accountLinkDialog" aria-labelledby="accountLinkDialogTitle">
     <div class="link-dialog-body">
       <div class="link-dialog-head">
@@ -1158,6 +1187,11 @@
         <button class="link-dialog-close" id="accountLinkDialogClose" type="button" aria-label="关闭">×</button>
       </div>
       <form id="accountLinkConfigPane">
+        <div class="field" id="accountLinkProductField">
+          <label for="accountLinkProduct">本次扫码渠道</label>
+          <select class="input" id="accountLinkProduct"><option value="appstore">YYB</option><option value="pcmgr">PCMgr</option></select>
+          <span class="field-note">切换前会说明影响，扫码成功后保留原账号 ID。</span>
+        </div>
         <div class="field">
           <label for="accountLinkTTL">链接有效期（分钟）</label>
           <input class="input" id="accountLinkTTL" type="number" min="1" max="10080" step="1" inputmode="numeric">
@@ -1192,16 +1226,16 @@
       accounts: [],
       features: [
         { name: "getCode", label: "/wx/code 获取小程序 code", route: "/wx/code", requiresAppID: true },
-        { name: "getUserInfo", label: "/wx/getuserinfo 用户信息", route: "/wx/getuserinfo", requiresAppID: false },
+        { name: "getUserInfo", label: "/wx/getuserinfo 渠道账号资料", route: "/wx/getuserinfo", requiresAppID: false },
         { name: "encryptKey", label: "/wx/encryptkey 加密能力转发", route: "/wx/encryptkey", requiresAppID: true, needsPayload: true },
         { name: "latestUserKey", label: "/wx/getlatestuserkey 用户最新加密密钥", route: "/wx/getlatestuserkey", requiresAppID: true, needsPayload: true },
         { name: "getPhoneNumber", label: "/wx/getphonenumber 手机号", route: "/wx/getphonenumber", requiresAppID: true },
-        { name: "cloud", label: "/wx/cloud 云函数", route: "/wx/cloud", requiresAppID: true, needsPayload: true },
+        { name: "cloud", label: "/wx/cloud 通用数据转发", route: "/wx/cloud", requiresAppID: true, needsPayload: true },
         { name: "qrcodeauth", label: "/wx/qrcodeauth 二维码授权", route: "/wx/qrcodeauth", requiresAppID: false, requiresAccount: false },
-        { name: "mpGetA8Key", label: "/wx/mpgeta8key 文章会话", route: "/wx/mpgeta8key", requiresAppID: true, needsPayload: true },
-        { name: "appmsgext", label: "/wx/appmsgext 文章阅读数", route: "/wx/appmsgext", requiresAppID: true, needsPayload: true },
-        { name: "appmsglike", label: "/wx/appmsglike 文章点赞", route: "/wx/appmsglike", requiresAppID: true, needsPayload: true },
-        { name: "oauth", label: "/wx/oauth 公众号授权", route: "/wx/oauth", requiresAppID: true }
+        { name: "mpGetA8Key", label: "/wx/mpgeta8key 文章会话转发（未验证）", route: "/wx/mpgeta8key", requiresAppID: true, needsPayload: true },
+        { name: "appmsgext", label: "/wx/appmsgext 文章数据转发（未验证）", route: "/wx/appmsgext", requiresAppID: true, needsPayload: true },
+        { name: "appmsglike", label: "/wx/appmsglike 文章点赞转发（未验证）", route: "/wx/appmsglike", requiresAppID: true, needsPayload: true },
+        { name: "oauth", label: "/wx/oauth 公众号授权链接（仅生成）", route: "/wx/oauth", requiresAppID: true }
       ],
       proxyConfigs: new Map(),
       selectedOpenID: "",
@@ -1276,8 +1310,8 @@
       return true;
     }
 
-    async function api(method, url, body) {
-      const options = { method, headers: { "Content-Type": "application/json" } };
+    async function api(method, url, body, headers = {}) {
+      const options = { method, headers: { "Content-Type": "application/json", ...headers } };
       if (body !== undefined) options.body = JSON.stringify(body);
       const response = await fetch(url, options);
       const text = await response.text();
@@ -1376,6 +1410,10 @@
     function lifecycleMarkup(account) {
       if (account.status === "expired") return '<span class="account-lifecycle lifecycle-inactive">保活已停止 · 重新扫码后恢复</span>';
       const now = Math.floor(Date.now() / 1000);
+      if(account.scan_product==='pcmgr'){
+		const due=Number(account.credential_expires_at||0),remaining=Math.max(0,due-now),interval=Number(account.credential_expires_in||86400),ratio=Math.min(1,remaining/interval);
+		return `<span class="account-lifecycle" aria-label="PCMgr 续期计划"><span class="lifecycle-row" title="计划执行续期的时间，不代表服务端真实有效期"><span class="lifecycle-label">下次续期</span><span class="lifecycle-track"><span style="--lifecycle-color:${lifecycleColor(ratio)};width:${(ratio*100).toFixed(1)}%"></span></span><span class="lifecycle-value">${due?remaining?lifecycleDuration(remaining):'待续期':'未记录'}</span></span><span class="lifecycle-note">PCMgr · 续期计划，非实际有效期</span></span>`;
+	  }
       const observed = Number(account.refresh_token_observed_at || 0);
       const scanWindow = 30 * 86400;
       const scanRemaining = observed ? Math.max(0, scanWindow - (now - observed)) : 0;
@@ -1425,6 +1463,7 @@
       $("addAccountLinkBtn").disabled = !selected;
       $("syncAllQingLongBtn").disabled = state.accounts.length === 0;
       $("deleteAccountBtn").disabled = !selected;
+      $("mergeAccountsBtn").disabled = state.accounts.length < 2;
       $("proxySettingsLink").href = selected ? `/proxies?ref=${encodeURIComponent(selected.id)}` : "/proxies";
       document.querySelectorAll(".account-card").forEach(card => {
         const selected = card.dataset.openid === state.selectedOpenID;
@@ -1432,6 +1471,7 @@
         card.querySelector(".account-select").setAttribute("aria-pressed", String(selected));
       });
       placeMobileAccountActions();
+      updateFeatureHint();
     }
 
     function placeMobileAccountActions() {
@@ -1504,9 +1544,12 @@
           <span class="account-main">
             <span class="account-header">
               <button type="button" class="account-name account-select" aria-pressed="false" aria-label="选择账号 ${escapeHTML(number)}，${escapeHTML(name)}，${status}">${escapeHTML(name)}</button>
+              <span class="account-header-tools">
               ${pendingConfirmation
                 ? `<button type="button" class="account-status account-status-toggle ${cls}" aria-expanded="false" aria-controls="confirm-account-${account.id}" aria-label="确认账号 ${escapeHTML(number)} 的状态"><span class="status-dot"></span>${status}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>`
                 : `<span class="account-status ${cls}" title="${account.rescan_recommended ? "RefreshToken 已使用约 25 天，建议在失效前重新扫码" : ""}"><span class="status-dot"></span>${status}</span>`}
+              <span class="scan-channel-badge" title="扫码渠道：${account.scan_product === 'pcmgr' ? 'PCMgr' : 'YYB'}" aria-label="${account.scan_product === 'pcmgr' ? 'PCMgr' : 'YYB'} 渠道"><img alt="" src="/static/images/scan-${account.scan_product === 'pcmgr' ? 'pcmgr' : 'yyb'}.png"></span>
+              </span>
             </span>
             <span class="account-meta" title="最后检查 ${formatChecked(account.last_checked_at)}">ID ${escapeHTML(number)} · ${escapeHTML(proxy)}${!isExpired && state.proxyConfigs.get(String(account.id))?.keepalive_supported === false ? " · 不可保活" : ""}</span>
             <span class="account-openid" title="OpenID: ${escapeHTML(account.openid)}">OpenID: ${escapeHTML(account.openid)}</span>
@@ -1622,6 +1665,42 @@
       $("oauthStateGroup").classList.toggle("hidden", !isOAuth);
       $("appidLabel").textContent = isOAuth ? "公众号 AppID" : "APPID";
       $("appidInput").placeholder = isOAuth ? "wx...（18 位公众号 AppID）" : "小程序 AppID";
+      updateFeatureHint();
+    }
+
+    function updateFeatureHint() {
+      const feature = currentFeatureName();
+      const product = getSelectedAccount()?.scan_product === "pcmgr" ? "PCMgr" : "YYB";
+      const hints = {
+        getCode: "小程序取码，不能替代原生 APP 或公众号授权。",
+        getUserInfo: product === "PCMgr" ? "读取扫码时保存的渠道资料，不检测小程序登录态。" : "读取渠道账号资料，不是目标小程序的加密资料。",
+        encryptKey: "通过 1133 转发，需要完整 JSON；以返回的 err_no 判断结果。",
+        latestUserKey: "通过 1133 转发 webapi_getuserencryptkey，以返回的 err_no 判断结果。",
+        getPhoneNumber: product === "PCMgr" ? "使用原生 1141 路径（待实测），需要目标小程序支持及真实授权。" : "使用原有 1020 兼容路径，需要目标小程序支持及真实授权。",
+        cloud: "通用 operateWxData 转发，需要真实业务参数，不自动生成云函数请求。",
+        qrcodeauth: "新建当前渠道二维码；生成成功不代表已扫码登录。",
+        mpGetA8Key: "仅兼容转发，尚未实现独立公众号 A8Key 链路。",
+        appmsgext: "仅兼容转发，尚未验证文章接口可用。",
+        appmsglike: "仅兼容转发，尚未验证文章接口可用；提交可能产生点赞操作。",
+        oauth: "仅生成授权链接，需要在微信完成授权，不会直接返回 code。"
+      };
+      $("featureHint").textContent = `${product} · ${hints[feature] || "选择要测试的接口。"}`;
+    }
+
+    function protocolResultFailure(result) {
+      let value = result?.result || result;
+      for (let depth = 0; depth < 4 && value; depth++) {
+        if (typeof value === "string") {
+          try { value = JSON.parse(value); } catch { break; }
+        }
+        if (!value || typeof value !== "object") break;
+        for (const key of ["err_no", "errcode", "ret"]) {
+          if (typeof value[key] === "number" && value[key] !== 0) return `${key}=${value[key]}`;
+        }
+        if (typeof value.base_resp?.ret === "number" && value.base_resp.ret !== 0) return `ret=${value.base_resp.ret}`;
+        value = value.data;
+      }
+      return "";
     }
 
     async function loadHealth() {
@@ -1638,9 +1717,11 @@
       }
     }
 
-    async function loadAccounts() {
-      parkMobileAccountActions();
-      $("accountStrip").innerHTML = `<div class="empty-state">账号加载中</div>`;
+    async function loadAccounts({background = false} = {}) {
+      if (!background) {
+        parkMobileAccountActions();
+        $("accountStrip").innerHTML = `<div class="empty-state">账号加载中</div>`;
+      }
       try {
         state.accounts = await api("GET", "/accounts");
 		state.proxyConfigs.clear();
@@ -1656,8 +1737,10 @@
         await loadAccountProxySummary();
         setActivity("账号列表已加载");
       } catch (error) {
-        parkMobileAccountActions();
-        $("accountStrip").innerHTML = `<div class="empty-state">账号加载失败：${escapeHTML(error.data?.detail || error.message)}</div>`;
+        if (!background) {
+          parkMobileAccountActions();
+          $("accountStrip").innerHTML = `<div class="empty-state">账号加载失败：${escapeHTML(error.data?.detail || error.message)}</div>`;
+        }
         setActivity("账号列表加载失败");
       }
     }
@@ -1822,6 +1905,50 @@
 
     let pendingAccountLinkKind = "";
     let pendingAccountLinkAccount = null;
+    let confirmedAccountLinkProduct = "";
+    let mergePreviewKey = "", mergeBusy = false;
+
+    function resetMergePreview() {
+      mergePreviewKey = "";
+      $("mergeAccountConfirmBtn").disabled = true;
+      $("mergeAccountPreview").textContent = "先预览，再确认合并。来源有专属任务时需先处理任务。";
+    }
+
+    function openMergeAccountDialog() {
+      if (state.accounts.length < 2) return;
+      const options = state.accounts.map(account => `<option value="${account.id}">ID ${account.id} · ${escapeHTML(accountName(account))} · ${account.scan_product === 'pcmgr' ? 'PCMgr' : 'YYB'}</option>`).join("");
+      $("mergeSourceAccount").innerHTML = options; $("mergeTargetAccount").innerHTML = options;
+      const source = getSelectedAccount() || state.accounts.at(-1);
+      $("mergeSourceAccount").value = String(source.id);
+      $("mergeTargetAccount").value = String(state.accounts.find(account => account.id !== source.id).id);
+      resetMergePreview(); $("mergeAccountDialog").showModal();
+    }
+
+    async function mergeAccount(confirm) {
+      if (mergeBusy || confirm && !mergePreviewKey) return;
+      mergeBusy = true;
+      const source = $("mergeSourceAccount").value, target = $("mergeTargetAccount").value;
+      $("mergeAccountPreviewBtn").disabled = true; $("mergeAccountConfirmBtn").disabled = true;
+      $("mergeSourceAccount").disabled = true; $("mergeTargetAccount").disabled = true;
+      $("mergeAccountPreview").textContent = confirm ? "正在合并，请稍候…" : "正在核对账号…";
+      try {
+        const result = await api("POST", "/accounts/merge", {source_ref:source,target_ref:target,confirm,preview_key:mergePreviewKey});
+        if (!confirm) {
+          mergePreviewKey = result.preview_key;
+          $("mergeAccountPreview").textContent = `将 ID ${result.source.id}（${accountName(result.source)}，${result.source.scan_product === 'pcmgr' ? 'PCMgr' : 'YYB'}）的授权移入 ID ${result.target.id}。来源 ID ${result.source.id} 将删除。${result.note}`;
+        } else {
+          $("mergeAccountDialog").close(); mergePreviewKey = "";
+          const params = new URLSearchParams(location.search); params.set("ref", result.account.id); history.replaceState(null,"",`/?${params}`);
+          await loadAccounts({background:true});
+          setActivity(result.warning || `已合并到 ID ${result.account.id}，来源 ID ${result.removed_id} 已释放`);
+        }
+      } catch(error) {
+        mergePreviewKey = ""; $("mergeAccountPreview").textContent = error.message;
+      } finally {
+        mergeBusy = false; $("mergeAccountPreviewBtn").disabled = false; $("mergeAccountConfirmBtn").disabled = !mergePreviewKey;
+        $("mergeSourceAccount").disabled = false; $("mergeTargetAccount").disabled = false;
+      }
+    }
 
     function openAccountLinkDialog(kind) {
       const account = getSelectedAccount();
@@ -1829,9 +1956,12 @@
       const defaultMinutes = kind === "update" ? 10 : 30;
       pendingAccountLinkKind = kind;
       pendingAccountLinkAccount = account;
+      confirmedAccountLinkProduct = account.scan_product || "appstore";
+      $("accountLinkProduct").value = confirmedAccountLinkProduct;
+      $("accountLinkProductField").hidden = kind !== "update";
       $("accountLinkDialogTitle").textContent = kind === "update" ? "生成更新链接" : "生成新增链接";
       $("accountLinkDialogDescription").textContent = kind === "update"
-        ? `仅限 ${account.remark || account.nickname || `账号 ${account.id}`} 扫码更新，复制时自动加更新提示`
+        ? `更新 ${account.remark || account.nickname || `账号 ${account.id}`}，可为本次链接选择渠道`
         : "可扫码添加任意未录入的 YYB 账号，复制时自动加新增提示";
       $("accountLinkTTL").value = String(defaultMinutes);
       $("accountLinkConfigPane").hidden = false;
@@ -1866,7 +1996,8 @@
       button.disabled = true;
       button.textContent = "正在生成";
       try {
-        const result = await api("POST", "/api/account-links", { kind, ref: String(account.id), ttl_seconds: minutes * 60 });
+        const product = kind === "update" ? $("accountLinkProduct").value : "";
+        const result = await api("POST", "/api/account-links", { kind, ref: String(account.id), ttl_seconds: minutes * 60, product, confirm_switch:kind === "update" && product !== (account.scan_product || "appstore") && product === confirmedAccountLinkProduct });
         const shareText = accountLinkShareText(kind, account, result.url);
         let copied = true;
         try { await copyText(shareText, $("accountLinkURL")); } catch { copied = false; }
@@ -1909,7 +2040,7 @@
       $("accountLinkExistingSummary").textContent = blocked
         ? `已拦截：该账号已有 ${items.length} 条未消费链接。使用现有链接，或作废后再生成。`
         : `该账号已有 ${items.length} 条未消费链接。`;
-      $("accountLinkExistingList").innerHTML = items.map(item => `<div class="link-dialog-existing-row"><span>链接 ${item.id} · 有效期至 ${new Date(item.expires_at * 1000).toLocaleString()}</span><span class="inline-actions"><button class="btn secondary" type="button" data-existing-copy="${item.id}">复制</button><a class="btn secondary" href="${item.url || '#'}" target="_blank" rel="noopener">打开</a><button class="btn secondary" type="button" data-existing-revoke="${item.id}">作废</button></span></div>`).join("");
+      $("accountLinkExistingList").innerHTML = items.map(item => `<div class="link-dialog-existing-row"><span>链接 ${item.id}${item.product ? ` · ${item.product === 'pcmgr' ? 'PCMgr' : 'YYB'}` : ''} · 有效期至 ${new Date(item.expires_at * 1000).toLocaleString()}</span><span class="inline-actions"><button class="btn secondary" type="button" data-existing-copy="${item.id}">复制</button><a class="btn secondary" href="${item.url || '#'}" target="_blank" rel="noopener">打开</a><button class="btn secondary" type="button" data-existing-revoke="${item.id}">作废</button></span></div>`).join("");
       const account = pendingAccountLinkAccount;
       $("accountLinkExistingList").querySelectorAll("[data-existing-copy]").forEach(button => button.onclick = async () => { const item = items.find(entry => String(entry.id) === button.dataset.existingCopy); if (!item?.url) return; try { await copyText(accountLinkShareText(item.kind || pendingAccountLinkKind, account, item.url)); button.textContent = "已复制"; setTimeout(() => { button.textContent = "复制"; }, 1600); } catch { setActivity("分享内容已选中，请按 Ctrl+C"); } });
       $("accountLinkExistingList").querySelectorAll("[data-existing-revoke]").forEach(button => button.onclick = async () => {
@@ -2010,7 +2141,7 @@
       try {
         const result = await api("POST", "/accounts/refresh");
         setResult(result, "存活刷新完成", false);
-        await loadAccounts();
+        await loadAccounts({background:true});
       } catch (error) {
         setResult(error.data || error.message, "存活刷新失败", true);
       } finally {
@@ -2026,7 +2157,7 @@
       try {
         const result = await api("POST", "/accounts/resync");
         setResult(result, "资料同步完成", false);
-        await loadAccounts();
+        await loadAccounts({background:true});
       } catch (error) {
         setResult(error.data || error.message, "资料同步失败", true);
       } finally {
@@ -2057,7 +2188,7 @@
       const isOAuth = endpoint.toLowerCase() === "oauth";
       const isQRCodeAuth = feature?.name === "qrcodeauth";
       const body = isQRCodeAuth
-        ? undefined
+        ? (account ? { product: account.scan_product || "appstore" } : undefined)
         : isOAuth
         ? {
             ref: String(account.id),
@@ -2093,18 +2224,42 @@
       setActivity(`正在调用 ${endpoint}${account ? `：${accountName(account)}` : ""}`);
 
       try {
-        const result = await api("POST", feature?.route || (isOAuth ? "/wx/oauth" : `/wxapp/${endpoint}`), body);
+        const token = $("protocolTokenInput").value.trim().replace(/^Bearer\s+/i, "").trim();
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        const result = await api("POST", feature?.route || (isOAuth ? "/wx/oauth" : `/wxapp/${endpoint}`), body, headers);
+        $("protocolTokenInput").removeAttribute("aria-invalid");
         const seconds = ((performance.now() - startedAt) / 1000).toFixed(1);
-        setResult(result, `调用完成，用时 ${seconds}s`, false);
-        await loadAccounts();
+        const failure = protocolResultFailure(result);
+        const outcome = failure ? `上游拒绝：${failure}`
+          : isOAuth ? "已生成链接，待微信授权"
+          : endpoint === "getUserInfo" ? "已读取渠道资料"
+          : feature?.needsPayload || endpoint === "getPhoneNumber" ? "转发完成，请检查内层业务结果"
+          : "调用完成";
+        setResult(result, `${outcome} · ${seconds}s`, Boolean(failure));
+        await loadAccounts({background:true});
       } catch (error) {
-        setResult(error.data || error.message, `调用失败 ${error.status || ""}`.trim(), true);
+        if (error.status === 401) {
+          $("protocolTokenInput").setAttribute("aria-invalid", "true");
+          $("protocolTokenInput").focus();
+          setResult("协议令牌缺失或错误，请填写 YYB_PROTOCOL_TOKEN 后重试。", "调用失败 401", true);
+        } else {
+          const ticketRefused = /PCMgr GetLoginBuffer rejected: code=1\b/.test(error.message);
+          const detail = ticketRefused ? `PCMgr 取票据失败（20138/1），本次接口未执行。请核对该渠道的小程序授权。\n\n${error.message}` : error.data || error.message;
+          setResult(detail, ticketRefused ? "渠道取票据失败" : `调用失败 ${error.status || ""}`.trim(), true);
+        }
       } finally {
         button.disabled = false;
       }
     }
 
     $("reloadAccountsBtn").addEventListener("click", loadAccounts);
+    $("mergeAccountsBtn").addEventListener("click", openMergeAccountDialog);
+    $("mergeAccountClose").addEventListener("click", () => { if (!mergeBusy) $("mergeAccountDialog").close(); });
+    $("mergeAccountDialog").addEventListener("cancel", event => { if (mergeBusy) event.preventDefault(); });
+    $("mergeSourceAccount").addEventListener("change", resetMergePreview);
+    $("mergeTargetAccount").addEventListener("change", resetMergePreview);
+    $("mergeAccountPreviewBtn").addEventListener("click", () => mergeAccount(false));
+    $("mergeAccountConfirmBtn").addEventListener("click", () => mergeAccount(true));
     $("accountSearch").addEventListener("input", renderAccounts);
     $("accountStatusFilter").addEventListener("change", renderAccounts);
     $("repairAccountsBtn").addEventListener("click", repairAccounts);
@@ -2120,6 +2275,19 @@
     $("updateAccountLinkBtn").addEventListener("click", () => openAccountLinkDialog("update"));
     $("addAccountLinkBtn").addEventListener("click", () => openAccountLinkDialog("add"));
     $("accountLinkConfigPane").addEventListener("submit", event => { event.preventDefault(); createAccountLink(); });
+    $("accountLinkProduct").addEventListener("change", async () => {
+      const account = pendingAccountLinkAccount;
+      if (!account) return;
+      const product = $("accountLinkProduct").value;
+      $("accountLinkGenerateBtn").disabled = true;
+      try {
+        if (product !== (account.scan_product || "appstore") && !await confirmScanChannelSwitch({from:account.scan_product || "appstore",to:product,account:`账号 ID ${account.id}`})) {
+          $("accountLinkProduct").value = confirmedAccountLinkProduct;
+          return;
+        }
+        confirmedAccountLinkProduct = product;
+      } finally { $("accountLinkGenerateBtn").disabled = false; }
+    });
     $("accountLinkDialogClose").addEventListener("click", closeAccountLinkDialog);
     $("accountLinkCancelBtn").addEventListener("click", closeAccountLinkDialog);
     $("accountLinkDoneBtn").addEventListener("click", closeAccountLinkDialog);
@@ -2128,7 +2296,20 @@
     $("deleteAccountBtn").addEventListener("click", deleteAccount);
     $("saveQingLongBtn").addEventListener("click", saveQingLongConfig);
     $("clearQingLongBtn").addEventListener("click", clearQingLongConfig);
-    $("featureSel").addEventListener("change", togglePayload);
+    $("featureSel").addEventListener("change", () => {
+      togglePayload();
+      const input = $("payloadInput");
+      const example = '{"api_name":"webapi_getuserencryptkey","data":{},"env":1}';
+      if (["encryptKey", "latestUserKey"].includes(currentFeatureName()) && !input.value.trim()) input.value = example;
+      else if (!["encryptKey", "latestUserKey"].includes(currentFeatureName()) && input.value === example) input.value = "";
+    });
+    $("protocolTokenInput").addEventListener("input", () => $("protocolTokenInput").removeAttribute("aria-invalid"));
+    $("clearProtocolTokenBtn").addEventListener("click", () => {
+      $("protocolTokenInput").value = "";
+      $("protocolTokenInput").removeAttribute("aria-invalid");
+      $("protocolTokenInput").focus();
+    });
+    window.addEventListener("pagehide", () => { $("protocolTokenInput").value = ""; });
     $("callBtn").addEventListener("click", callFeature);
     $("clearResultBtn").addEventListener("click", () => setResult("结果已清空。", "等待调用", false));
     $("copyResultBtn").addEventListener("click", async () => {
@@ -2151,6 +2332,8 @@
     loadQingLongConfig();
     setInterval(loadHealth, 15000);
   </script>
+  <link rel="stylesheet" href="/static/css/scan-channel.css?v=048">
+  <script src="/static/js/scan-channel.js?v=048"></script>
   <script src="/static/js/platform.js?v=20260930-console"></script>
 </body>
 </html>

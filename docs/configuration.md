@@ -28,8 +28,8 @@ YYB_PORT=8000
 YYB_AUTH_DRIVER=sqlite
 YYB_ADMIN_USER=admin
 YYB_ADMIN_PASSWORD='请替换为强密码'
-YYB_KEEPALIVE_INTERVAL=1m
-YYB_KEEPALIVE_AHEAD=45m
+YYB_KEEPALIVE_INTERVAL=2m
+YYB_KEEPALIVE_AHEAD=4m
 ```
 
 ```powershell
@@ -147,6 +147,8 @@ YYB_PROTOCOL_TOKEN=请生成随机长字符串
 ```http
 Authorization: Bearer <token>
 ```
+
+控制台「接口测试」在「协议令牌」输入框填写；接口文档使用 `Authorize → ProtocolBearer`（只填令牌，不带 `Bearer`）。这两个入口从 v0.2.35 起提供。控制台输入只在当前页面使用，不保存，刷新后需重新填写；服务器不会把已配置的令牌回传给页面。网页登录与协议令牌分别校验。
 
 未设置时保留旧版兼容行为，因此更应把接口限制在可信内网、VPN 或受控反向代理后。
 
